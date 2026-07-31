@@ -135,13 +135,17 @@
         </button>
 
         <div class="grid grid-cols-2 gap-3">
-          <button class="card p-4 text-left" onclick="Nav.go('generator')">
+          <button class="card p-4 text-left col-span-2" onclick="Nav.go('generator')">
             <p class="font-display font-semibold text-sm">Generate plan</p>
             <p class="text-xs mt-1" style="color: var(--text-muted);">Build a new workout</p>
           </button>
           <button class="card p-4 text-left" onclick="Nav.go('history')">
             <p class="font-display font-semibold text-sm">History</p>
             <p class="text-xs mt-1" style="color: var(--text-muted);">Past sessions & trends</p>
+          </button>
+          <button class="card p-4 text-left" onclick="Nav.go('programs')">
+            <p class="font-display font-semibold text-sm">My programs</p>
+            <p class="text-xs mt-1" style="color: var(--text-muted);">Saved & past plans</p>
           </button>
         </div>
 
@@ -172,6 +176,13 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
         Add exercise
       </button>
+    </section>
+
+    <!-- ===================== PROGRAMS VIEW ===================== -->
+    <section id="view-programs" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">My Programs</h2>
+      <div id="programsContent" class="space-y-3"></div>
     </section>
 
     <!-- ===================== HISTORY VIEW ===================== -->

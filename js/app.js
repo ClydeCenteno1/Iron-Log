@@ -37,6 +37,7 @@ const Nav = {
     if (viewName === 'log') renderLogSession();
     if (viewName === 'history') renderHistory();
     if (viewName === 'library') renderLibrary();
+    if (viewName === 'programs') renderPrograms();
     if (viewName === 'chat') renderChatView();
     if (viewName === 'settings') { renderThemeGrid(); renderSettingsForm(); }
 
@@ -75,7 +76,10 @@ function renderDashboard() {
           <p class="font-display font-semibold">${plan.splitLabel}</p>
           <p class="text-xs" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')}</p>
         </div>
-        <button class="text-xs" style="color: var(--text-muted);" onclick="Nav.go('generator')">New plan</button>
+        <div class="flex items-center gap-3">
+          <button class="text-xs" style="color: var(--text-muted);" onclick="Nav.go('programs')">My programs</button>
+          <button class="text-xs" style="color: var(--text-muted);" onclick="deleteProgram('${plan.id}')">Delete</button>
+        </div>
       </div>
       <div class="flex flex-col gap-2 mt-2">
         ${plan.days.map(day => `
@@ -177,6 +181,45 @@ function startSessionFromPlanDay(dayNumber) {
 }
 
 /* ============================================================
+   PROGRAMS (saved plans library)
+   ============================================================ */
+
+function renderPrograms() {
+  const el = document.getElementById('programsContent');
+  const plans = [...Storage.getPlans()].sort((a, b) => b.createdAt - a.createdAt);
+
+  if (plans.length === 0) {
+    el.innerHTML = `<div class="card p-6 text-center"><p class="text-sm" style="color: var(--text-muted);">No saved programs yet. Generate one to see it here.</p></div>`;
+    return;
+  }
+
+  el.innerHTML = plans.map(plan => `
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-1">
+        <p class="font-display font-semibold">${plan.splitLabel || plan.splitKey}</p>
+        ${plan.active ? '<span class="text-xs" style="color: var(--accent-logged);">Active</span>' : ''}
+      </div>
+      <p class="text-xs mb-3" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')} &middot; ${new Date(plan.createdAt).toLocaleDateString()}</p>
+      <div class="flex gap-2">
+        ${!plan.active ? `<button class="btn-secondary py-2 px-3 text-xs flex-1" onclick="setActiveProgram('${plan.id}')">Set active</button>` : ''}
+        <button class="btn-secondary py-2 px-3 text-xs flex-1" style="color: var(--accent-warn, #E8B23A);" onclick="deleteProgram('${plan.id}')">Delete</button>
+      </div>
+    </div>`).join('');
+}
+
+function setActiveProgram(planId) {
+  Storage.setActivePlan(planId);
+  renderPrograms();
+}
+
+function deleteProgram(planId) {
+  if (!confirm('Delete this program? This can\'t be undone.')) return;
+  Storage.deletePlan(planId);
+  if (Nav.current === 'programs') renderPrograms();
+  if (Nav.current === 'dashboard') renderDashboard();
+}
+
+/* ============================================================
    WORKOUT GENERATOR (questionnaire flow)
    ============================================================ */
 
@@ -185,9 +228,9 @@ let generatorState = {};
 function renderGeneratorStart() {
   const profile = Storage.getProfile();
   generatorState = {
-    goal: profile.goal === 'cut' || profile.goal === 'bulk' ? 'hypertrophy' : 'hypertrophy',
-    splitKey: 'upper_lower',
-    styleKey: profile.trainingStyle || 'balanced',
+    goal: null,
+    splitKey: null,
+    styleKey: null,
     equipment: profile.equipment && profile.equipment.length ? profile.equipment : [],
     daysPerWeek: profile.daysPerWeek || 3,
     experienceLevel: profile.experienceLevel || 'beginner',
@@ -403,9 +446,12 @@ function renderLogSession() {
           <button class="text-xs" style="color: var(--text-muted);" onclick="removeExerciseFromSession(${entryIdx})">Remove</button>
         </div>
 
-        <div class="flex items-center gap-2 mb-3 p-2 rounded-lg" style="background: color-mix(in srgb, var(--accent-suggest) 10%, transparent);">
+        <div class="flex items-center gap-2 mb-2 p-2 rounded-lg" style="background: color-mix(in srgb, var(--accent-suggest) 10%, transparent);">
           <span class="dot-suggest w-2 h-2 rounded-full flex-shrink-0"></span>
           <p class="text-xs tag-suggest" id="coachNote-${entryIdx}">${suggestion.message}</p>
+        </div>
+        <div id="aiOverload-${entryIdx}" class="mb-3">
+          <button class="text-xs" style="color: var(--text-muted);" onclick="requestAIOverload(${entryIdx}, '${entry.exerciseId}')">✨ Ask AI to review this target</button>
         </div>
 
         <div class="space-y-2">
@@ -446,6 +492,42 @@ function renderLogSession() {
       if (narration.ok && noteEl) noteEl.textContent = narration.text;
     });
   }
+}
+
+async function requestAIOverload(entryIdx, exerciseId) {
+  if (!GeminiClient.hasGeminiKey()) { promptForGeminiKey(() => requestAIOverload(entryIdx, exerciseId)); return; }
+
+  const el = document.getElementById(`aiOverload-${entryIdx}`);
+  if (!el) return;
+  el.innerHTML = `<p class="text-xs" style="color: var(--text-muted);">Checking with AI…</p>`;
+
+  const session = Storage.getActiveSession();
+  const exercises = Storage.getExercises();
+  const ex = exercises.find(x => x.id === exerciseId);
+  const profile = Storage.getProfile();
+
+  const result = await Progression.suggestNextTargetAI({
+    exerciseId,
+    exerciseName: ex ? ex.name : 'exercise',
+    styleKey: session.trainingStyle,
+    profile,
+  });
+
+  if (!result.ok) {
+    el.innerHTML = `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't get an AI suggestion (${result.error === 'missing_key' ? 'no API key' : result.error}).</p>`;
+    return;
+  }
+
+  const s = result.suggestion;
+  const weightLabel = s.suggestedWeight !== null ? `${s.suggestedWeight}kg` : 'no change';
+  const agreeLabel = s.agreesWithBaseline ? 'Agrees with the baseline' : 'Suggests an adjustment';
+
+  el.innerHTML = `
+    <div class="p-2 rounded-lg text-xs" style="background: color-mix(in srgb, var(--accent-logged) 10%, transparent); color: var(--text);">
+      <p class="font-medium mb-0.5">✨ AI suggestion — ${agreeLabel}</p>
+      <p>${weightLabel} × ${s.suggestedReps}, ${s.suggestedSets} sets</p>
+      <p class="mt-1" style="color: var(--text-muted);">${s.reasoning}</p>
+    </div>`;
 }
 
 function addSetToEntry(entryIdx) {

@@ -185,19 +185,38 @@ function getPlans() {
   return readJSON(Keys.PLANS, []);
 }
 
+// Saves a new plan as a program in the list and marks it active.
+// All prior plans are kept (for the Programs page) but marked inactive.
 function saveActivePlan(plan) {
-  const record = { schemaVersion: SCHEMA_VERSION, id: uid('plan'), createdAt: Date.now(), ...plan };
-  writeJSON(Keys.PLANS, [record]); // v1: only keep the single active plan
+  const list = getPlans().map(p => ({ ...p, active: false }));
+  const record = { schemaVersion: SCHEMA_VERSION, id: uid('plan'), createdAt: Date.now(), active: true, ...plan };
+  list.push(record);
+  writeJSON(Keys.PLANS, list);
   return record;
 }
 
 function getActivePlan() {
   const plans = getPlans();
-  return plans.length ? plans[plans.length - 1] : null;
+  return plans.find(p => p.active) || null;
 }
 
+// Removes the active-plan marker without deleting the program itself.
 function clearActivePlan() {
-  return writeJSON(Keys.PLANS, []);
+  const list = getPlans().map(p => ({ ...p, active: false }));
+  return writeJSON(Keys.PLANS, list);
+}
+
+function setActivePlan(planId) {
+  const list = getPlans().map(p => ({ ...p, active: p.id === planId }));
+  writeJSON(Keys.PLANS, list);
+  return list.find(p => p.id === planId) || null;
+}
+
+// Permanently deletes a saved program. If it was active, nothing becomes
+// active automatically — dashboard falls back to its empty/no-plan state.
+function deletePlan(planId) {
+  const list = getPlans().filter(p => p.id !== planId);
+  return writeJSON(Keys.PLANS, list);
 }
 
 /* ---------------- Settings ---------------- */
@@ -233,7 +252,7 @@ window.Storage = {
   getSessions, saveSessions, addSession, getLastSessionForExercise,
   getActiveSession, saveActiveSession, clearActiveSession, startNewSession,
   getProfile, saveProfile,
-  getPlans, saveActivePlan, getActivePlan,
+  getPlans, saveActivePlan, getActivePlan, setActivePlan, deletePlan,
   getSettings, saveSettings,
   getMeals, saveMeals,
 };

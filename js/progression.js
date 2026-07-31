@@ -215,11 +215,84 @@ function roundToStep(weight) {
   return Math.round(weight * 2) / 2;
 }
 
+/**
+ * AI-assisted overload suggestion. The rules engine above remains the
+ * source of truth; this asks Gemini to review the same history and either
+ * confirm the rules suggestion or propose an adjustment with reasoning
+ * (e.g. accounting for a plateau over several sessions, not just the last
+ * one). Always labeled as an AI suggestion in the UI — never silently
+ * replaces suggestNextTarget's output.
+ */
+async function suggestNextTargetAI({ exerciseId, exerciseName, styleKey, profile }) {
+  if (!window.GeminiClient || !GeminiClient.hasGeminiKey()) {
+    return { ok: false, error: 'missing_key' };
+  }
+
+  const rulesResult = suggestNextTarget({ exerciseId, styleKey });
+  const style = getStyleConfig(styleKey);
+
+  const history = Storage.getSessions()
+    .filter(s => s.entries.some(e => e.exerciseId === exerciseId))
+    .sort((a, b) => b.date - a.date)
+    .slice(0, 5)
+    .map(s => {
+      const entry = s.entries.find(e => e.exerciseId === exerciseId);
+      const top = getTopSet(entry.sets);
+      return top ? `${new Date(s.date).toLocaleDateString()}: ${top.weight ?? '?'}kg x ${top.reps ?? '?'}` : null;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  const systemInstruction = `You are a strength coach reviewing recent lift history to suggest the next session's target.
+A deterministic rules engine has already produced a baseline suggestion from the most recent session alone. You have more history than it does — use the fuller trend (e.g. plateaus, repeated misses, steady gains) to confirm or adjust that baseline.
+Never suggest anything unsafe (no large jumps, no ignoring repeated regressions). If you agree with the baseline, say so.
+Return ONLY valid JSON, no prose, no markdown fences.`;
+
+  const prompt = `Exercise: ${exerciseName}
+Training style: ${style.label} (rep range ${style.repRange[0]}-${style.repRange[1]})
+Goal: ${profile.goal}, experience: ${profile.experienceLevel}
+
+Recent history (most recent first):
+${history || 'No history available.'}
+
+Rules-engine baseline suggestion: ${rulesResult.status} — ${rulesResult.suggestedWeight !== null ? rulesResult.suggestedWeight + 'kg' : 'n/a'} x ${rulesResult.suggestedReps}, ${rulesResult.suggestedSets} sets.
+
+Return JSON in exactly this shape:
+{
+  "agreesWithBaseline": true or false,
+  "suggestedWeight": number or null,
+  "suggestedReps": "string like '8-12' or a number",
+  "suggestedSets": number,
+  "reasoning": "1-2 sentence explanation referencing the trend, not just the last session"
+}`;
+
+  const result = await GeminiClient.callGemini({ systemInstruction, prompt, jsonMode: true });
+  if (!result.ok) return result;
+
+  const data = result.data;
+  if (!data || typeof data !== 'object') {
+    return { ok: false, error: 'Gemini returned an unexpected suggestion shape.' };
+  }
+
+  return {
+    ok: true,
+    suggestion: {
+      agreesWithBaseline: !!data.agreesWithBaseline,
+      suggestedWeight: data.suggestedWeight ?? null,
+      suggestedReps: data.suggestedReps ?? rulesResult.suggestedReps,
+      suggestedSets: data.suggestedSets ?? rulesResult.suggestedSets,
+      reasoning: data.reasoning || '',
+      baseline: rulesResult,
+    },
+  };
+}
+
 window.Progression = {
   TRAINING_STYLES,
   getStyleConfig,
   getTopSet,
   classifyPerformance,
   suggestNextTarget,
+  suggestNextTargetAI,
   evaluateCompletedSet,
 };
