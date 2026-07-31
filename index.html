@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Iron Log — Workout Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0E0F12; --bg-elevated: #17181C; --card: #1C1E23; --border: #3A3D42;
+    --text: #F5F3EF; --text-muted: #9A9CA3;
+    --accent-suggest: #E8542E; --accent-logged: #5FA8D3;
+    --accent-success: #5FA870; --accent-warn: #E8B23A;
+    --shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  * { -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--bg); color: var(--text); }
+  body { font-family: 'Inter', sans-serif; padding-bottom: 88px; }
+  .font-display { font-family: 'Space Grotesk', sans-serif; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+  .elevated { background: var(--bg-elevated); }
+
+  input[type="number"], input[type="text"], select, textarea {
+    background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 10px 12px; width: 100%;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid var(--accent-logged); outline-offset: 1px; border-color: var(--accent-logged);
+  }
+
+  .btn-primary {
+    background: var(--accent-logged); color: #0E0F12; font-weight: 600;
+    border-radius: 12px; padding: 14px 20px; transition: transform .1s ease, opacity .15s ease;
+  }
+  .btn-primary:active { transform: scale(0.97); }
+  .btn-suggest {
+    background: color-mix(in srgb, var(--accent-suggest) 16%, transparent);
+    color: var(--accent-suggest); border: 1px solid color-mix(in srgb, var(--accent-suggest) 40%, transparent);
+    border-radius: 12px; font-weight: 600;
+  }
+  .btn-secondary {
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    border-radius: 12px; padding: 12px 18px;
+  }
+  .btn-secondary:active { transform: scale(0.97); }
+
+  .tag-suggest { color: var(--accent-suggest); }
+  .tag-logged { color: var(--accent-logged); }
+  .dot-suggest { background: var(--accent-suggest); }
+  .dot-logged { background: var(--accent-logged); }
+
+  .nav-item { color: var(--text-muted); }
+  .nav-item.active { color: var(--text); }
+  .nav-item.active .nav-dot { opacity: 1; }
+  .nav-dot { opacity: 0; }
+
+  /* Plate stack signature element */
+  .plate-stack { display: flex; align-items: flex-end; gap: 3px; height: 28px; }
+  .plate { width: 6px; border-radius: 2px; background: var(--accent-logged); transition: height .25s ease; }
+  .plate.suggested { background: var(--accent-suggest); opacity: 0.55; border: 1px dashed var(--accent-suggest); }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+</style>
+</head>
+<body class="max-w-lg mx-auto min-h-screen">
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="sticky top-0 z-30 elevated border-b" style="border-color: var(--border);">
+    <div class="flex items-center justify-between px-4 py-3">
+      <div class="flex items-center gap-2">
+        <div class="plate-stack">
+          <div class="plate dot-logged" style="height:10px;"></div>
+          <div class="plate dot-logged" style="height:18px;"></div>
+          <div class="plate dot-logged" style="height:26px;"></div>
+        </div>
+        <h1 class="font-display font-bold text-lg">Iron Log</h1>
+      </div>
+      <button id="settingsBtn" class="p-2 rounded-lg btn-secondary" aria-label="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="px-4 py-4">
+
+    <!-- ===================== DASHBOARD VIEW ===================== -->
+    <section id="view-dashboard" class="view active space-y-4">
+      <div id="emptyState" class="hidden card p-6 text-center space-y-3">
+        <p class="font-display text-lg font-semibold">Let's set up your first workout</p>
+        <p class="text-sm" style="color: var(--text-muted);">Generate a plan based on your goals, or jump straight into logging a session freestyle.</p>
+        <div class="flex flex-col gap-2 pt-2">
+          <button class="btn-primary" onclick="Nav.go('generator')">Generate my first workout</button>
+          <button class="btn-secondary" onclick="startFreestyleSession()">Log a session freestyle</button>
+        </div>
+      </div>
+
+      <div id="dashboardContent" class="space-y-4">
+        <div class="card p-4">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-sm" style="color: var(--text-muted);">This week</span>
+            <span id="weekConsistency" class="text-sm font-mono">0/0 days</span>
+          </div>
+          <div id="weekDots" class="flex gap-1.5"></div>
+        </div>
+
+        <div id="activeSessionCard" class="hidden card p-4 border-l-4" style="border-left-color: var(--accent-logged);">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="font-display font-semibold">Session in progress</p>
+              <p class="text-sm" style="color: var(--text-muted);" id="activeSessionMeta"></p>
+            </div>
+            <button class="btn-primary py-2 px-4 text-sm" onclick="Nav.go('log')">Resume</button>
+          </div>
+        </div>
+
+        <button id="startSessionBtn" class="w-full btn-primary text-left px-5 py-4 flex items-center justify-between">
+          <span class="font-display font-semibold text-base">Log workout</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+
+        <div class="grid grid-cols-2 gap-3">
+          <button class="card p-4 text-left" onclick="Nav.go('generator')">
+            <p class="font-display font-semibold text-sm">Generate plan</p>
+            <p class="text-xs mt-1" style="color: var(--text-muted);">Build a new workout</p>
+          </button>
+          <button class="card p-4 text-left" onclick="Nav.go('history')">
+            <p class="font-display font-semibold text-sm">History</p>
+            <p class="text-xs mt-1" style="color: var(--text-muted);">Past sessions & trends</p>
+          </button>
+        </div>
+
+        <div class="card p-4">
+          <p class="font-display font-semibold text-sm mb-3">Recent lifts</p>
+          <div id="recentLifts" class="space-y-2 text-sm">
+            <p style="color: var(--text-muted);">No sessions logged yet.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== GENERATOR VIEW ===================== -->
+    <section id="view-generator" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">Generate a workout</h2>
+      <div id="generatorStep"></div>
+    </section>
+
+    <!-- ===================== LOG SESSION VIEW ===================== -->
+    <section id="view-log" class="view space-y-4">
+      <div class="flex items-center justify-between">
+        <button class="text-sm" style="color: var(--text-muted);" onclick="confirmLeaveSession()">&larr; Back</button>
+        <button id="finishSessionBtn" class="btn-primary py-2 px-4 text-sm">Finish</button>
+      </div>
+      <div id="logSessionContent" class="space-y-3"></div>
+      <button id="addExerciseToSessionBtn" class="w-full btn-secondary py-3 flex items-center justify-center gap-2">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        Add exercise
+      </button>
+    </section>
+
+    <!-- ===================== HISTORY VIEW ===================== -->
+    <section id="view-history" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">History</h2>
+      <div id="historyContent" class="space-y-3"></div>
+    </section>
+
+    <!-- ===================== EXERCISE LIBRARY VIEW ===================== -->
+    <section id="view-library" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <div class="flex items-center justify-between">
+        <h2 class="font-display text-xl font-bold">Exercise Library</h2>
+        <button class="btn-secondary py-1.5 px-3 text-sm" onclick="openAddExerciseModal()">+ Add</button>
+      </div>
+      <input type="text" id="librarySearch" placeholder="Search exercises..." oninput="renderLibrary()">
+      <div id="libraryContent" class="space-y-2"></div>
+    </section>
+
+    <!-- ===================== CHATBOT VIEW ===================== -->
+    <section id="view-chat" class="view space-y-3">
+      <div class="flex items-center justify-between">
+        <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+        <h2 class="font-display text-lg font-bold">Coach Chat</h2>
+        <span class="w-10"></span>
+      </div>
+      <div id="chatMessages" class="space-y-3" style="padding-bottom: 90px;"></div>
+      <div class="fixed bottom-16 left-0 right-0 max-w-lg mx-auto px-4 pb-2" id="chatInputBar">
+        <div class="flex gap-2">
+          <input type="text" id="chatInput" placeholder="Ask about training or nutrition..." class="flex-1" onkeydown="if(event.key==='Enter') sendChatMessage()">
+          <button class="btn-primary px-4" onclick="sendChatMessage()">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SETTINGS VIEW ===================== -->
+    <section id="view-settings" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">Settings</h2>
+
+      <div class="card p-4 space-y-3">
+        <p class="font-display font-semibold text-sm">Theme</p>
+        <div id="themeGrid" class="grid grid-cols-2 gap-2"></div>
+      </div>
+
+      <div class="card p-4 space-y-3">
+        <p class="font-display font-semibold text-sm">Training style</p>
+        <select id="settingsStyleSelect" onchange="onStyleChange(this.value)"></select>
+        <p class="text-xs" style="color: var(--text-muted);">Affects rep ranges, rest times, and how the progression engine weighs weight vs. reps.</p>
+      </div>
+
+      <div class="card p-4 space-y-2">
+        <p class="font-display font-semibold text-sm">Units</p>
+        <select id="settingsUnitsSelect" onchange="onUnitsChange(this.value)">
+          <option value="kg">Kilograms (kg)</option>
+          <option value="lb">Pounds (lb)</option>
+        </select>
+      </div>
+
+      <div class="card p-4 space-y-2">
+        <p class="font-display font-semibold text-sm">Gemini API key</p>
+        <p class="text-xs" style="color: var(--text-muted);">Powers AI workout generation, coaching notes, and the chatbot. Stored only in this browser.</p>
+        <input type="text" id="geminiKeyInput" placeholder="Paste your Gemini API key">
+        <button class="btn-primary w-full py-2 text-sm" onclick="saveGeminiKeyFromSettings()">Save key</button>
+        <p id="geminiKeyStatus" class="text-xs"></p>
+      </div>
+
+      <div class="card p-4 text-xs" style="color: var(--text-muted);">
+        Your data is stored only on this device's browser. Clearing browser data or switching devices will not carry it over — there's no cloud sync in this version.
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== BOTTOM NAV ===================== -->
+  <nav class="fixed bottom-0 left-0 right-0 z-30 elevated border-t safe-bottom" style="border-color: var(--border);">
+    <div class="max-w-lg mx-auto grid grid-cols-5 text-xs">
+      <button class="nav-item active flex flex-col items-center gap-1 py-3" data-nav="dashboard" onclick="Nav.go('dashboard')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+        <span>Home</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
+      </button>
+      <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="generator" onclick="Nav.go('generator')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+        <span>Plan</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
+      </button>
+      <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="library" onclick="Nav.go('library')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z"/></svg>
+        <span>Library</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
+      </button>
+      <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="chat" onclick="Nav.go('chat')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Coach</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
+      </button>
+      <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="history" onclick="Nav.go('history')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 4-8"/></svg>
+        <span>History</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ===================== MODAL ROOT ===================== -->
+  <div id="modalRoot"></div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/themes.js"></script>
+  <script src="js/exercise-seed.js"></script>
+  <script src="js/progression.js"></script>
+  <script src="js/generator.js"></script>
+  <script src="js/gemini-client.js"></script>
+  <script src="js/generator-ai.js"></script>
+  <script src="js/coach-narration.js"></script>
+  <script src="js/chatbot.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
