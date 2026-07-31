@@ -259,7 +259,9 @@ async function suggestNextTargetAI({ exerciseId, exerciseName, styleKey, profile
     .map(s => {
       const entry = s.entries.find(e => e.exerciseId === exerciseId);
       const top = getTopSet(entry.sets);
-      return top ? `${new Date(s.date).toLocaleDateString()}: ${top.weight ?? '?'}kg x ${top.reps ?? '?'}` : null;
+      const base = top ? `${new Date(s.date).toLocaleDateString()}: ${top.weight ?? '?'}kg x ${top.reps ?? '?'}` : null;
+      if (!base) return null;
+      return entry.notes ? `${base} (note: ${entry.notes})` : base;
     })
     .filter(Boolean)
     .join('\n');

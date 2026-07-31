@@ -71,6 +71,7 @@ function renderDashboard() {
   const planCard = document.getElementById('activePlanCard');
   if (plan && plan.days && plan.days.length) {
     planCard.classList.remove('hidden');
+    const planSessions = getSessionsForPlan(plan, sessions);
     planCard.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <div>
@@ -83,13 +84,19 @@ function renderDashboard() {
         </div>
       </div>
       <div class="flex flex-col gap-2 mt-2">
-        ${plan.days.map(day => `
+        ${plan.days.map(day => {
+          const lastForDay = planSessions.find(item => item.dayNumber === day.dayNumber);
+          const lastLabel = lastForDay
+            ? `Last: ${new Date(lastForDay.session.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+            : 'Not logged yet';
+          return `
           <button class="btn-primary py-2.5 text-sm text-left px-3 flex items-center justify-between" onclick="startSessionFromPlanDay(${day.dayNumber})">
             <span>Day ${day.dayNumber}: ${day.focus}</span>
-            <span class="text-xs opacity-80">${day.exercises.length} ex</span>
-          </button>
-        `).join('')}
-      </div>`;
+            <span class="text-xs opacity-80">${day.exercises.length} ex &middot; ${lastLabel}</span>
+          </button>`;
+        }).join('')}
+      </div>
+      ${planSessions.length ? `<button class="text-xs mt-2" style="color: var(--text-muted);" onclick="Nav.go('programs')">View previous sessions for this program &rarr;</button>` : ''}`;
   } else {
     planCard.classList.add('hidden');
   }
@@ -175,6 +182,7 @@ function startSessionFromPlanDay(dayNumber) {
   const session = Storage.startNewSession(plan.styleKey);
   session.entries = day.exercises.map(ex => ({
     exerciseId: ex.exerciseId,
+    notes: '',
     sets: Array.from({ length: ex.targetSets || 3 }, () => ({ weight: null, reps: null, rpe: null, isWarmup: false })),
   }));
   Storage.saveActiveSession(session);
@@ -312,18 +320,84 @@ function renderPrograms() {
     return;
   }
 
-  el.innerHTML = plans.map(plan => `
+  const exercises = Storage.getExercises();
+  const allSessions = Storage.getSessions();
+
+  el.innerHTML = plans.map(plan => {
+    const priorSessions = getSessionsForPlan(plan, allSessions);
+    return `
     <div class="card p-4">
       <div class="flex items-center justify-between mb-1">
         <p class="font-display font-semibold">${plan.splitLabel || plan.splitKey}</p>
         ${plan.active ? '<span class="text-xs" style="color: var(--accent-logged);">Active</span>' : ''}
       </div>
       <p class="text-xs mb-3" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')} &middot; ${new Date(plan.createdAt).toLocaleDateString()}</p>
-      <div class="flex gap-2">
+      <div class="flex gap-2 mb-3">
         ${!plan.active ? `<button class="btn-secondary py-2 px-3 text-xs flex-1" onclick="setActiveProgram('${plan.id}')">Set active</button>` : ''}
         <button class="btn-secondary py-2 px-3 text-xs flex-1" style="color: var(--accent-warn, #E8B23A);" onclick="deleteProgram('${plan.id}')">Delete</button>
       </div>
-    </div>`).join('');
+      ${renderPlanSessionHistory(plan, priorSessions, exercises)}
+    </div>`;
+  }).join('');
+}
+
+// Finds every logged session whose exercises match one of this plan's days
+// (same exercise-id set as maybeOfferRepeatProgramOverload uses), tagged
+// with which day they belong to, most recent first.
+function getSessionsForPlan(plan, allSessions) {
+  if (!plan.days || !plan.days.length) return [];
+  const dayFingerprints = plan.days.map(day => ({
+    dayNumber: day.dayNumber,
+    focus: day.focus,
+    ids: [...new Set(day.exercises.map(e => e.exerciseId))].sort().join(','),
+  }));
+
+  return allSessions
+    .map(s => {
+      const sessionIds = [...new Set(s.entries.map(e => e.exerciseId))].sort().join(',');
+      const match = dayFingerprints.find(d => d.ids === sessionIds);
+      return match ? { session: s, dayNumber: match.dayNumber, focus: match.focus } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.session.date - a.session.date);
+}
+
+function renderPlanSessionHistory(plan, priorSessions, exercises) {
+  if (priorSessions.length === 0) {
+    return `<p class="text-xs" style="color: var(--text-muted);">No sessions logged for this program yet.</p>`;
+  }
+
+  const visibleCount = 3;
+  const shown = priorSessions.slice(0, visibleCount);
+  const rest = priorSessions.slice(visibleCount);
+
+  const rowHtml = (item) => {
+    const dateLabel = new Date(item.session.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const lifts = item.session.entries.map(entry => {
+      const ex = exercises.find(x => x.id === entry.exerciseId);
+      const setsLabel = entry.sets.map(set => `${set.weight ?? '—'}kg×${set.reps ?? '—'}`).join(', ');
+      const noteLabel = entry.notes ? ` — 📝 ${entry.notes}` : '';
+      return `${ex ? ex.name : 'exercise'}: ${setsLabel || '—'}${noteLabel}`;
+    }).join(' | ');
+    return `
+      <div class="py-1.5 border-b" style="border-color: var(--border);">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-medium">${dateLabel} &middot; Day ${item.dayNumber}: ${item.focus}</span>
+        </div>
+        <p class="text-xs mt-0.5" style="color: var(--text-muted);">${lifts}</p>
+      </div>`;
+  };
+
+  const restId = `planHistoryRest_${plan.id}`;
+  return `
+    <div class="pt-2 border-t" style="border-color: var(--border);">
+      <p class="text-xs uppercase tracking-wide mb-1" style="color: var(--text-muted);">Previous sessions (${priorSessions.length})</p>
+      ${shown.map(rowHtml).join('')}
+      ${rest.length ? `
+        <div id="${restId}" class="hidden">${rest.map(rowHtml).join('')}</div>
+        <button class="text-xs mt-1" style="color: var(--accent-logged);" onclick="document.getElementById('${restId}').classList.toggle('hidden'); this.textContent = this.textContent.startsWith('Show') ? 'Hide older sessions' : 'Show ${rest.length} more';">Show ${rest.length} more</button>
+      ` : ''}
+    </div>`;
 }
 
 function setActiveProgram(planId) {
@@ -781,6 +855,8 @@ function renderLogSession() {
           `).join('')}
         </div>
         <button class="w-full btn-secondary mt-3 py-2 text-sm" onclick="addSetToEntry(${entryIdx})">+ Add set</button>
+        <textarea class="w-full mt-3 text-sm" rows="2" placeholder="Notes (e.g. felt heavy, elbow pain, form cue)"
+                  onchange="updateEntryNotes(${entryIdx}, this.value)">${entry.notes || ''}</textarea>
       </div>`;
   }).join('');
 
@@ -852,6 +928,12 @@ function removeSet(entryIdx, setIdx) {
   renderLogSession();
 }
 
+function updateEntryNotes(entryIdx, value) {
+  const session = Storage.getActiveSession();
+  session.entries[entryIdx].notes = value;
+  Storage.saveActiveSession(session);
+}
+
 function updateSet(entryIdx, setIdx, field, value) {
   const session = Storage.getActiveSession();
   const parsed = value === '' ? null : parseFloat(value);
@@ -905,6 +987,7 @@ function pickExerciseForSession(exerciseId) {
   const session = Storage.getActiveSession();
   session.entries.push({
     exerciseId,
+    notes: '',
     sets: [{ weight: null, reps: null, rpe: null, isWarmup: false }],
   });
   Storage.saveActiveSession(session);
@@ -1002,11 +1085,14 @@ function renderHistory() {
         <div class="space-y-1.5">
           ${s.entries.map(entry => {
             const ex = exercises.find(x => x.id === entry.exerciseId);
-            const topSet = Progression.getTopSet(entry.sets);
+            const setsLabel = entry.sets.map(set => `${set.weight ?? '—'}kg×${set.reps ?? '—'}${set.isWarmup ? ' (warmup)' : ''}`).join(', ');
             return `
-              <div class="flex items-center justify-between text-sm">
-                <span>${ex ? ex.name : 'Exercise'}</span>
-                <span class="font-mono text-xs tag-logged">${topSet ? `${topSet.weight ?? '—'}kg × ${topSet.reps ?? '—'}` : '—'}</span>
+              <div class="text-sm">
+                <div class="flex items-center justify-between">
+                  <span>${ex ? ex.name : 'Exercise'}</span>
+                  <span class="font-mono text-xs tag-logged">${setsLabel || '—'}</span>
+                </div>
+                ${entry.notes ? `<p class="text-xs mt-0.5" style="color: var(--text-muted);">📝 ${entry.notes}</p>` : ''}
               </div>`;
           }).join('')}
         </div>

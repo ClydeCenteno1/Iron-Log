@@ -24,7 +24,9 @@ function getChatContextBlock() {
     const lifts = s.entries.map(e => {
       const ex = exercises.find(x => x.id === e.exerciseId);
       const top = Progression.getTopSet(e.sets);
-      return top ? `${ex ? ex.name : 'exercise'} ${top.weight ?? '?'}kg x ${top.reps ?? '?'}` : null;
+      const base = top ? `${ex ? ex.name : 'exercise'} ${top.weight ?? '?'}kg x ${top.reps ?? '?'}` : null;
+      if (!base) return null;
+      return e.notes ? `${base} (note: ${e.notes})` : base;
     }).filter(Boolean).join(', ');
     return `${dateLabel}: ${lifts}`;
   }).join('\n');
