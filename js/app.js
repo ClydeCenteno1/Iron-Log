@@ -34,6 +34,7 @@ const Nav = {
 
     if (viewName === 'dashboard') renderDashboard();
     if (viewName === 'generator') renderGeneratorStart();
+    if (viewName === 'manualBuilder') renderManualBuilderStart();
     if (viewName === 'log') renderLogSession();
     if (viewName === 'history') renderHistory();
     if (viewName === 'library') renderLibrary();
@@ -177,7 +178,125 @@ function startSessionFromPlanDay(dayNumber) {
     sets: Array.from({ length: ex.targetSets || 3 }, () => ({ weight: null, reps: null, rpe: null, isWarmup: false })),
   }));
   Storage.saveActiveSession(session);
-  Nav.go('log');
+
+  maybeOfferRepeatProgramOverload(day, () => Nav.go('log'));
+}
+
+/* ---------------- Repeat-program AI overload prompt ---------------- */
+
+// Detects whether this exact set of exercises (same plan day) has been
+// logged before with real weight/rep data. If so, offers to have the AI
+// review that history and suggest how to progressively overload each lift
+// this time — every single time the user repeats the day, not just once.
+function maybeOfferRepeatProgramOverload(day, continueCallback) {
+  const dayExerciseIds = day.exercises.map(e => e.exerciseId).sort();
+  const sessions = Storage.getSessions();
+
+  const matchingPriorSessions = sessions.filter(s => {
+    const sessionIds = [...new Set(s.entries.map(e => e.exerciseId))].sort();
+    if (sessionIds.length !== dayExerciseIds.length) return false;
+    return sessionIds.every((id, i) => id === dayExerciseIds[i]);
+  });
+
+  if (matchingPriorSessions.length === 0) {
+    continueCallback();
+    return;
+  }
+
+  const modal = document.getElementById('modalRoot');
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
+      <div class="card w-full max-w-sm p-5 space-y-3">
+        <p class="font-display font-bold">You've done this session before</p>
+        <p class="text-sm" style="color: var(--text-muted);">You've logged this exact set of exercises ${matchingPriorSessions.length} time${matchingPriorSessions.length > 1 ? 's' : ''} before. Want AI to review your weights/reps from last time and suggest how to progressively overload today?</p>
+        <div class="flex gap-2 pt-1">
+          <button class="btn-secondary flex-1" onclick="declineRepeatProgramOverload()">Not now</button>
+          <button class="btn-primary flex-1" onclick="acceptRepeatProgramOverload()">Yes, show me</button>
+        </div>
+      </div>
+    </div>`;
+
+  window._repeatOverloadContinue = continueCallback;
+  window._repeatOverloadDay = day;
+}
+
+function declineRepeatProgramOverload() {
+  const continueCallback = window._repeatOverloadContinue;
+  window._repeatOverloadContinue = null;
+  window._repeatOverloadDay = null;
+  closeModal();
+  if (continueCallback) continueCallback();
+}
+
+async function acceptRepeatProgramOverload() {
+  const day = window._repeatOverloadDay;
+  const continueCallback = window._repeatOverloadContinue;
+  closeModal();
+
+  // Show a lightweight loading modal while we fetch suggestions per exercise.
+  const modal = document.getElementById('modalRoot');
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
+      <div class="card w-full max-w-sm p-5 space-y-3">
+        <p class="font-display font-bold">Reviewing your progress…</p>
+        <p class="text-sm" style="color: var(--text-muted);">Checking each exercise against your history.</p>
+      </div>
+    </div>`;
+
+  const profile = Storage.getProfile();
+  const exercisesLib = Storage.getExercises();
+  const session = Storage.getActiveSession();
+  const styleKey = (session && session.trainingStyle) || profile.trainingStyle;
+
+  const results = [];
+  for (const ex of day.exercises) {
+    const exInfo = exercisesLib.find(x => x.id === ex.exerciseId);
+    const name = exInfo ? exInfo.name : ex.name || 'Exercise';
+    const baseline = Progression.suggestNextTarget({ exerciseId: ex.exerciseId, styleKey });
+
+    let aiResult = null;
+    if (GeminiClient.hasGeminiKey()) {
+      aiResult = await Progression.suggestNextTargetAI({
+        exerciseId: ex.exerciseId,
+        exerciseName: name,
+        styleKey,
+        profile,
+      });
+    }
+    results.push({ name, baseline, ai: aiResult && aiResult.ok ? aiResult.suggestion : null });
+  }
+
+  showRepeatOverloadResults(results, continueCallback);
+}
+
+function showRepeatOverloadResults(results, continueCallback) {
+  const modal = document.getElementById('modalRoot');
+  const anyAI = results.some(r => r.ai);
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
+      <div class="card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+        <p class="font-display font-bold text-lg">Progressive overload plan</p>
+        ${!anyAI ? `<p class="text-xs" style="color: var(--text-muted);">Showing rules-based targets only — add a Gemini API key in Settings for AI-reviewed suggestions too.</p>` : ''}
+        <div class="space-y-2">
+          ${results.map(r => {
+            const weightLabel = r.baseline.suggestedWeight !== null ? `${r.baseline.suggestedWeight}kg` : 'n/a';
+            return `
+              <div class="p-3 rounded-lg" style="background: var(--bg-elevated);">
+                <p class="text-sm font-medium">${r.name}</p>
+                <p class="text-xs font-mono tag-logged mt-1">Target: ${weightLabel} × ${r.baseline.suggestedReps}, ${r.baseline.suggestedSets} sets</p>
+                <p class="text-xs mt-1" style="color: var(--text-muted);">${r.baseline.message}</p>
+                ${r.ai ? `
+                  <div class="mt-2 pt-2 border-t" style="border-color: var(--border);">
+                    <p class="text-xs tag-suggest font-medium">✨ AI ${r.ai.agreesWithBaseline ? 'agrees' : 'suggests an adjustment'}</p>
+                    <p class="text-xs mt-0.5">${r.ai.suggestedWeight !== null ? r.ai.suggestedWeight + 'kg' : 'n/a'} × ${r.ai.suggestedReps}, ${r.ai.suggestedSets} sets</p>
+                    <p class="text-xs mt-1" style="color: var(--text-muted);">${r.ai.reasoning}</p>
+                  </div>` : ''}
+              </div>`;
+          }).join('')}
+        </div>
+        <button class="btn-primary w-full" onclick="closeModal(); window._repeatOverloadContinue && window._repeatOverloadContinue();">Got it, start session</button>
+      </div>
+    </div>`;
 }
 
 /* ============================================================
@@ -414,6 +533,189 @@ function renderGeneratedPlan(plan) {
       <button class="btn-primary w-full" onclick="Nav.go('dashboard')">Save & go to dashboard</button>
       <button class="btn-secondary w-full" onclick="renderGeneratorStart()">Start over</button>
     </div>`;
+}
+
+/* ============================================================
+   MANUAL PROGRAM BUILDER (no AI, no rules-engine templates —
+   the user picks their own days, exercises, sets/reps directly)
+   ============================================================ */
+
+let manualBuilderState = null;
+
+function emptyManualDay(dayNumber) {
+  return { dayNumber, focus: '', exercises: [] };
+}
+
+function renderManualBuilderStart() {
+  manualBuilderState = {
+    splitLabel: '',
+    days: [emptyManualDay(1)],
+  };
+  renderManualBuilder();
+}
+
+function renderManualBuilder() {
+  const el = document.getElementById('manualBuilderContent');
+  const exercises = Storage.getExercises();
+  const state = manualBuilderState;
+
+  el.innerHTML = `
+    <div class="card p-4 space-y-2">
+      <label class="text-xs" style="color: var(--text-muted);">Program name</label>
+      <input type="text" id="manualProgramName" placeholder="e.g. My Push Pull Legs" value="${escapeAttr(state.splitLabel)}" onchange="manualBuilderState.splitLabel = this.value">
+    </div>
+
+    ${state.days.map((day, dayIdx) => `
+      <div class="card p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <p class="font-display font-semibold">Day ${day.dayNumber}</p>
+          ${state.days.length > 1 ? `<button class="text-xs" style="color: var(--text-muted);" onclick="removeManualDay(${dayIdx})">Remove day</button>` : ''}
+        </div>
+        <input type="text" placeholder="Day focus (e.g. Push, Legs, Full Body)" value="${escapeAttr(day.focus)}" onchange="updateManualDayFocus(${dayIdx}, this.value)">
+
+        <div class="space-y-2">
+          ${day.exercises.map((ex, exIdx) => `
+            <div class="p-3 rounded-lg space-y-2" style="background: var(--bg-elevated);">
+              <div class="flex items-center justify-between">
+                <p class="text-sm font-medium">${ex.name}</p>
+                <button class="text-xs" style="color: var(--text-muted);" onclick="removeManualExercise(${dayIdx}, ${exIdx})">Remove</button>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="text-[10px] uppercase tracking-wide" style="color: var(--text-muted);">Sets</label>
+                  <input type="number" inputmode="numeric" min="1" value="${ex.targetSets}" onchange="updateManualExerciseField(${dayIdx}, ${exIdx}, 'targetSets', this.value)">
+                </div>
+                <div>
+                  <label class="text-[10px] uppercase tracking-wide" style="color: var(--text-muted);">Target reps</label>
+                  <input type="text" placeholder="e.g. 8-12" value="${escapeAttr(ex.targetReps)}" onchange="updateManualExerciseField(${dayIdx}, ${exIdx}, 'targetReps', this.value)">
+                </div>
+              </div>
+            </div>
+          `).join('') || `<p class="text-xs" style="color: var(--text-muted);">No exercises added to this day yet.</p>`}
+        </div>
+
+        <button class="w-full btn-secondary py-2 text-sm" onclick="openExercisePickerForManualDay(${dayIdx})">+ Add exercise</button>
+      </div>
+    `).join('')}
+
+    <button class="w-full btn-secondary py-3" onclick="addManualDay()">+ Add day</button>
+    <button class="w-full btn-primary py-3" onclick="saveManualProgram()">Save program</button>
+  `;
+}
+
+function escapeAttr(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function addManualDay() {
+  manualBuilderState.days.push(emptyManualDay(manualBuilderState.days.length + 1));
+  renderManualBuilder();
+}
+
+function removeManualDay(dayIdx) {
+  manualBuilderState.days.splice(dayIdx, 1);
+  // Renumber remaining days so Day N labels stay sequential
+  manualBuilderState.days.forEach((d, i) => { d.dayNumber = i + 1; });
+  renderManualBuilder();
+}
+
+function updateManualDayFocus(dayIdx, value) {
+  manualBuilderState.days[dayIdx].focus = value;
+}
+
+function updateManualExerciseField(dayIdx, exIdx, field, value) {
+  const ex = manualBuilderState.days[dayIdx].exercises[exIdx];
+  ex[field] = field === 'targetSets' ? (parseInt(value, 10) || 1) : value;
+}
+
+function removeManualExercise(dayIdx, exIdx) {
+  manualBuilderState.days[dayIdx].exercises.splice(exIdx, 1);
+  renderManualBuilder();
+}
+
+function openExercisePickerForManualDay(dayIdx) {
+  const exercises = Storage.getExercises();
+  const modal = document.getElementById('modalRoot');
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-end" style="background: rgba(0,0,0,0.6);" onclick="if(event.target===this) closeModal()">
+      <div class="card w-full max-h-[75vh] rounded-b-none flex flex-col" style="border-bottom:none;">
+        <div class="p-4 border-b" style="border-color: var(--border);">
+          <p class="font-display font-semibold mb-2">Add exercise to Day ${manualBuilderState.days[dayIdx].dayNumber}</p>
+          <input type="text" id="manualPickerSearch" placeholder="Search..." oninput="filterManualExercisePicker(${dayIdx}, this.value)">
+        </div>
+        <div id="manualPickerList" class="overflow-y-auto p-4 space-y-1.5 flex-1"></div>
+      </div>
+    </div>`;
+  renderManualPickerList(dayIdx, exercises);
+}
+
+function renderManualPickerList(dayIdx, list) {
+  const el = document.getElementById('manualPickerList');
+  if (list.length === 0) {
+    el.innerHTML = `<p class="text-sm text-center py-4" style="color: var(--text-muted);">No matches. Try the Library tab to add a custom exercise.</p>`;
+    return;
+  }
+  el.innerHTML = list.map(ex => `
+    <button class="w-full text-left p-3 rounded-lg btn-secondary flex items-center justify-between" onclick="pickExerciseForManualDay(${dayIdx}, '${ex.id}')">
+      <span class="text-sm">${ex.name}</span>
+      <span class="text-xs" style="color: var(--text-muted);">${ex.muscleGroup}</span>
+    </button>`).join('');
+}
+
+function filterManualExercisePicker(dayIdx, query) {
+  const q = query.toLowerCase();
+  const filtered = Storage.getExercises().filter(ex => ex.name.toLowerCase().includes(q));
+  renderManualPickerList(dayIdx, filtered);
+}
+
+function pickExerciseForManualDay(dayIdx, exerciseId) {
+  const ex = Storage.getExercises().find(x => x.id === exerciseId);
+  if (!ex) return;
+  manualBuilderState.days[dayIdx].exercises.push({
+    exerciseId: ex.id,
+    name: ex.name,
+    muscleGroup: ex.muscleGroup,
+    equipment: ex.equipment,
+    targetSets: 3,
+    targetReps: '8-12',
+    restSeconds: 90,
+  });
+  closeModal();
+  renderManualBuilder();
+}
+
+function saveManualProgram() {
+  const state = manualBuilderState;
+  const nameInput = document.getElementById('manualProgramName');
+  const splitLabel = (nameInput ? nameInput.value.trim() : '') || state.splitLabel || 'My Program';
+
+  const nonEmptyDays = state.days.filter(d => d.exercises.length > 0);
+  if (nonEmptyDays.length === 0) {
+    alert('Add at least one exercise to at least one day before saving.');
+    return;
+  }
+
+  const days = nonEmptyDays.map((d, i) => ({
+    dayNumber: i + 1,
+    focus: d.focus.trim() || `Day ${i + 1}`,
+    exercises: d.exercises,
+  }));
+
+  const plan = {
+    goal: Storage.getProfile().goal || 'custom',
+    splitKey: 'manual',
+    splitLabel,
+    styleKey: Storage.getProfile().trainingStyle || 'balanced',
+    daysPerWeek: days.length,
+    days,
+    coachNote: '',
+    customRequest: '',
+    warnings: [],
+    source: 'manual',
+  };
+
+  Storage.saveActivePlan(plan);
+  Nav.go('dashboard');
 }
 
 /* ============================================================

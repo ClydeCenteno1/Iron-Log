@@ -104,6 +104,7 @@
         <p class="text-sm" style="color: var(--text-muted);">Generate a plan based on your goals, or jump straight into logging a session freestyle.</p>
         <div class="flex flex-col gap-2 pt-2">
           <button class="btn-primary" onclick="Nav.go('generator')">Generate my first workout</button>
+          <button class="btn-secondary" onclick="Nav.go('manualBuilder')">Build my own program</button>
           <button class="btn-secondary" onclick="startFreestyleSession()">Log a session freestyle</button>
         </div>
       </div>
@@ -135,9 +136,13 @@
         </button>
 
         <div class="grid grid-cols-2 gap-3">
-          <button class="card p-4 text-left col-span-2" onclick="Nav.go('generator')">
+          <button class="card p-4 text-left" onclick="Nav.go('generator')">
             <p class="font-display font-semibold text-sm">Generate plan</p>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">Build a new workout</p>
+            <p class="text-xs mt-1" style="color: var(--text-muted);">AI or rules-based</p>
+          </button>
+          <button class="card p-4 text-left" onclick="Nav.go('manualBuilder')">
+            <p class="font-display font-semibold text-sm">Build my own</p>
+            <p class="text-xs mt-1" style="color: var(--text-muted);">No AI, your exercises</p>
           </button>
           <button class="card p-4 text-left" onclick="Nav.go('history')">
             <p class="font-display font-semibold text-sm">History</p>
@@ -163,6 +168,14 @@
       <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
       <h2 class="font-display text-xl font-bold">Generate a workout</h2>
       <div id="generatorStep"></div>
+    </section>
+
+    <!-- ===================== MANUAL PROGRAM BUILDER VIEW ===================== -->
+    <section id="view-manualBuilder" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">Build your own program</h2>
+      <p class="text-sm" style="color: var(--text-muted);">No AI, no templates — pick your own days, exercises, sets, and rep targets.</p>
+      <div id="manualBuilderContent" class="space-y-3"></div>
     </section>
 
     <!-- ===================== LOG SESSION VIEW ===================== -->

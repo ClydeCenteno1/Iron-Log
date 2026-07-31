@@ -96,9 +96,14 @@ function classifyPerformance(currentTop, previousTop, targetReps) {
  */
 function suggestNextTarget({ exerciseId, styleKey }) {
   const style = getStyleConfig(styleKey);
-  const last = Storage.getLastSessionForExercise(exerciseId);
 
-  if (!last) {
+  // Pull full history for this exercise (most recent first) so we can compare
+  // the last logged session against the one before it — NOT against itself.
+  const history = Storage.getSessions()
+    .filter(s => s.entries.some(e => e.exerciseId === exerciseId))
+    .sort((a, b) => b.date - a.date);
+
+  if (history.length === 0) {
     return {
       status: 'no_history',
       message: 'No previous data for this exercise yet — log a session to get a suggestion.',
@@ -108,7 +113,8 @@ function suggestNextTarget({ exerciseId, styleKey }) {
     };
   }
 
-  const topSet = getTopSet(last.entry.sets);
+  const lastEntry = history[0].entries.find(e => e.exerciseId === exerciseId);
+  const topSet = getTopSet(lastEntry.sets);
   if (!topSet) {
     return {
       status: 'no_history',
@@ -119,14 +125,29 @@ function suggestNextTarget({ exerciseId, styleKey }) {
     };
   }
 
-  // Compare against the session before that, if it exists, to classify trend.
-  // If only one data point exists, we compare the top set against itself
-  // (met_or_exceeded baseline) so the very next session gets a real target.
+  // Compare the last session's top set against the one before it, if it exists.
+  // With only one data point, there's nothing to compare yet, so treat it as
+  // 'first_time' and give a straightforward starting target rather than
+  // fabricating a trend from a single number.
+  const previousEntry = history[1] ? history[1].entries.find(e => e.exerciseId === exerciseId) : null;
+  const previousTopSet = previousEntry ? getTopSet(previousEntry.sets) : null;
   const targetRepsTop = style.repRange[1];
-  const classification = classifyPerformance(topSet, topSet, targetRepsTop);
+  const classification = classifyPerformance(topSet, previousTopSet, targetRepsTop);
 
   let result;
   switch (classification) {
+    case 'first_time': {
+      // Only one data point exists — nothing to compare trend against yet.
+      // Suggest repeating the same weight/reps and building a second data point.
+      result = {
+        status: 'hold',
+        message: `You've logged this once before (${topSet.weight ?? '—'}kg × ${topSet.reps ?? '—'}). Repeat it or nudge up slightly if it felt easy — we'll have a real trend after this session.`,
+        suggestedWeight: topSet.weight,
+        suggestedReps: topSet.reps ?? style.repRange[1],
+        suggestedSets: style.setRange[1],
+      };
+      break;
+    }
     case 'met_or_exceeded': {
       if (style.progressionBias === 'weight') {
         const newWeight = roundToStep(topSet.weight * (1 + style.weightStepPct));
