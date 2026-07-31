@@ -53,16 +53,41 @@ document.getElementById('settingsBtn').addEventListener('click', () => Nav.go('s
 function renderDashboard() {
   const sessions = Storage.getSessions();
   const active = Storage.getActiveSession();
+  const plan = Storage.getActivePlan();
   const emptyState = document.getElementById('emptyState');
   const content = document.getElementById('dashboardContent');
 
-  if (sessions.length === 0 && !active) {
+  if (sessions.length === 0 && !active && !plan) {
     emptyState.classList.remove('hidden');
     content.classList.add('hidden');
     return;
   }
   emptyState.classList.add('hidden');
   content.classList.remove('hidden');
+
+  // Active plan banner — lets you actually start a session from a generated plan
+  const planCard = document.getElementById('activePlanCard');
+  if (plan && plan.days && plan.days.length) {
+    planCard.classList.remove('hidden');
+    planCard.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <p class="font-display font-semibold">${plan.splitLabel}</p>
+          <p class="text-xs" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')}</p>
+        </div>
+        <button class="text-xs" style="color: var(--text-muted);" onclick="Nav.go('generator')">New plan</button>
+      </div>
+      <div class="flex flex-col gap-2 mt-2">
+        ${plan.days.map(day => `
+          <button class="btn-primary py-2.5 text-sm text-left px-3 flex items-center justify-between" onclick="startSessionFromPlanDay(${day.dayNumber})">
+            <span>Day ${day.dayNumber}: ${day.focus}</span>
+            <span class="text-xs opacity-80">${day.exercises.length} ex</span>
+          </button>
+        `).join('')}
+      </div>`;
+  } else {
+    planCard.classList.add('hidden');
+  }
 
   // Week consistency dots (last 7 days)
   const today = new Date();
@@ -130,6 +155,27 @@ function startFreestyleSession() {
   Nav.go('log');
 }
 
+function startSessionFromPlanDay(dayNumber) {
+  const plan = Storage.getActivePlan();
+  if (!plan) return;
+  const day = plan.days.find(d => d.dayNumber === dayNumber);
+  if (!day) return;
+
+  // If a session is already in progress, ask before overwriting it.
+  const existing = Storage.getActiveSession();
+  if (existing && existing.entries.length > 0) {
+    if (!confirm('You have a session already in progress. Discard it and start this plan day instead?')) return;
+  }
+
+  const session = Storage.startNewSession(plan.styleKey);
+  session.entries = day.exercises.map(ex => ({
+    exerciseId: ex.exerciseId,
+    sets: Array.from({ length: ex.targetSets || 3 }, () => ({ weight: null, reps: null, rpe: null, isWarmup: false })),
+  }));
+  Storage.saveActiveSession(session);
+  Nav.go('log');
+}
+
 /* ============================================================
    WORKOUT GENERATOR (questionnaire flow)
    ============================================================ */
@@ -145,6 +191,7 @@ function renderGeneratorStart() {
     equipment: profile.equipment && profile.equipment.length ? profile.equipment : [],
     daysPerWeek: profile.daysPerWeek || 3,
     experienceLevel: profile.experienceLevel || 'beginner',
+    customRequest: '',
     step: 1,
   };
   renderGeneratorStep();
@@ -191,7 +238,7 @@ function renderGeneratorStep() {
         ${optionButton('styleKey', 'balanced', 'Balanced', '6-10 reps, moderate rest')}
       </div>`;
   } else if (step === 4) {
-    const equipOptions = ['Bodyweight', 'Dumbbells', 'Barbell', 'Machine', 'Cable Machine', 'Bands'];
+    const equipOptions = ['Bodyweight', 'Weighted Calisthenics', 'Dumbbells', 'Barbell', 'Machine', 'Cable Machine', 'Bands'];
     body = `
       <p class="text-sm mb-3" style="color: var(--text-muted);">What equipment do you have access to? (select all that apply)</p>
       <div class="grid grid-cols-2 gap-2 mb-4">
@@ -215,6 +262,8 @@ function renderGeneratorStep() {
         <option value="intermediate" ${generatorState.experienceLevel === 'intermediate' ? 'selected' : ''}>Intermediate</option>
         <option value="advanced" ${generatorState.experienceLevel === 'advanced' ? 'selected' : ''}>Advanced</option>
       </select>
+      <label class="text-xs" style="color: var(--text-muted);">Anything specific you want in this plan? (optional)</label>
+      <textarea id="customRequestInput" rows="2" placeholder="e.g. bad left knee, prioritize back, only 45 min sessions" class="mb-4">${generatorState.customRequest || ''}</textarea>
       <button class="btn-primary w-full" onclick="finishGeneratorQuestionnaire()">Generate my plan</button>`;
   }
 
@@ -254,6 +303,7 @@ function generatorNext() {
 async function finishGeneratorQuestionnaire() {
   generatorState.daysPerWeek = parseInt(document.getElementById('daysPerWeekSelect').value, 10);
   generatorState.experienceLevel = document.getElementById('experienceSelect').value;
+  generatorState.customRequest = document.getElementById('customRequestInput').value.trim();
 
   Storage.saveProfile({
     goal: generatorState.goal,
@@ -302,6 +352,7 @@ function renderGeneratedPlan(plan) {
         <p class="font-display font-bold text-lg">${plan.splitLabel}</p>
         <p class="text-sm" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${plan.goal.replace('_',' ')}</p>
         ${plan.coachNote ? `<p class="text-xs mt-2 tag-logged">${plan.coachNote}</p>` : ''}
+        ${plan.customRequest ? `<p class="text-xs mt-2" style="color: var(--text-muted);">Your notes: ${plan.customRequest}</p>` : ''}
         ${plan.warnings.length ? `<p class="text-xs mt-2 tag-suggest">${plan.warnings.join(' ')}</p>` : ''}
       </div>
       ${plan.days.map(day => `
@@ -623,7 +674,7 @@ function openAddExerciseModal() {
           ${['Chest','Back','Legs','Shoulders','Arms','Core','Other'].map(g => `<option value="${g}">${g}</option>`).join('')}
         </select>
         <select id="newExEquip">
-          ${['Bodyweight','Dumbbells','Barbell','Machine','Cable Machine','Bands'].map(e => `<option value="${e}">${e}</option>`).join('')}
+          ${['Bodyweight','Weighted Calisthenics','Dumbbells','Barbell','Machine','Cable Machine','Bands'].map(e => `<option value="${e}">${e}</option>`).join('')}
         </select>
         <textarea id="newExCues" placeholder="Form cues (optional)" rows="2"></textarea>
         <input type="text" id="newExVideo" placeholder="Video link (optional)">

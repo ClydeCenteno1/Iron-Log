@@ -104,6 +104,13 @@ function generatePlan(questionnaire) {
     }, {})
   );
 
+  const warnings = unmetGroups.length
+    ? [`No exercises available for: ${unmetGroups.join(', ')} with your selected equipment. Add custom exercises or expand equipment selection.`]
+    : [];
+  if (questionnaire.customRequest) {
+    warnings.push(`Note: this rules-based plan can't read free-text requests — your notes are saved below but not applied. Try "Retry with AI" to have them factored in.`);
+  }
+
   return {
     goal,
     splitKey,
@@ -111,9 +118,8 @@ function generatePlan(questionnaire) {
     styleKey,
     daysPerWeek,
     days,
-    warnings: unmetGroups.length
-      ? [`No exercises available for: ${unmetGroups.join(', ')} with your selected equipment. Add custom exercises or expand equipment selection.`]
-      : [],
+    customRequest: questionnaire.customRequest || '',
+    warnings,
   };
 }
 

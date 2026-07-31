@@ -196,6 +196,10 @@ function getActivePlan() {
   return plans.length ? plans[plans.length - 1] : null;
 }
 
+function clearActivePlan() {
+  return writeJSON(Keys.PLANS, []);
+}
+
 /* ---------------- Settings ---------------- */
 
 function getSettings() {

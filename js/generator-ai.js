@@ -14,7 +14,7 @@ const SPLIT_LABELS = {
 };
 
 function buildGeneratorPrompt(questionnaire) {
-  const { goal, splitKey, styleKey, equipment, daysPerWeek, experienceLevel } = questionnaire;
+  const { goal, splitKey, styleKey, equipment, daysPerWeek, experienceLevel, customRequest } = questionnaire;
   const style = Progression.getStyleConfig(styleKey);
   const exercises = Storage.getExercises();
   const equipmentSet = new Set(equipment.length ? equipment : ['Bodyweight']);
@@ -34,7 +34,7 @@ Goal: ${goal}
 Training style: ${style.label} (rep range ${style.repRange[0]}-${style.repRange[1]}, rest ~${style.restSeconds}s)
 Experience level: ${experienceLevel}
 Available equipment: ${[...equipmentSet].join(', ')}
-
+${customRequest ? `\nUser's additional request: "${customRequest}"\nIncorporate this where reasonable and safe. If it conflicts with the goal, split, or experience level above (e.g. an injury constraint vs. a contraindicated exercise), prioritize safety and note the tradeoff in coachNote.\n` : ''}
 Exercise catalog (name | muscle group | equipment) — pick ONLY from this list, using the exact name as written:
 ${exerciseCatalog}
 
@@ -101,6 +101,7 @@ async function generatePlanAI(questionnaire) {
     daysPerWeek: questionnaire.daysPerWeek,
     days,
     coachNote: raw.coachNote || '',
+    customRequest: questionnaire.customRequest || '',
     warnings: droppedNames.length
       ? [`AI suggested exercises not in your library, so they were skipped: ${droppedNames.join(', ')}.`]
       : [],
