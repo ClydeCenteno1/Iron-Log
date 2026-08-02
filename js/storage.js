@@ -217,6 +217,18 @@ function setActivePlan(planId) {
   return list.find(p => p.id === planId) || null;
 }
 
+// Updates an existing saved plan's content in place (name/days/exercises),
+// preserving its id, active flag, and original createdAt — used when editing
+// a manually-built program so it doesn't turn into a duplicate new plan.
+function updatePlan(planId, changes) {
+  const list = getPlans();
+  const idx = list.findIndex(p => p.id === planId);
+  if (idx === -1) return null;
+  list[idx] = { ...list[idx], ...changes, id: list[idx].id, createdAt: list[idx].createdAt, active: list[idx].active, schemaVersion: SCHEMA_VERSION };
+  writeJSON(Keys.PLANS, list);
+  return list[idx];
+}
+
 // Permanently deletes a saved program. If it was active, nothing becomes
 // active automatically — dashboard falls back to its empty/no-plan state.
 function deletePlan(planId) {
@@ -376,7 +388,7 @@ window.Storage = {
   getSessions, saveSessions, addSession, getLastSessionForExercise,
   getActiveSession, saveActiveSession, clearActiveSession, startNewSession,
   getProfile, saveProfile,
-  getPlans, saveActivePlan, getActivePlan, setActivePlan, deletePlan,
+  getPlans, saveActivePlan, getActivePlan, setActivePlan, updatePlan, deletePlan,
   getSettings, saveSettings,
   getMeals, saveMeals, addMeal, updateMeal, deleteMeal, getMealsForDate,
   getWeightLogs, saveWeightLogs, addWeightLog, deleteWeightLog, getRecentWeightLogs,

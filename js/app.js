@@ -69,7 +69,10 @@ const Nav = {
 
     if (viewName === 'dashboard') renderDashboard();
     if (viewName === 'generator') renderGeneratorStart();
-    if (viewName === 'manualBuilder') renderManualBuilderStart();
+    if (viewName === 'manualBuilder') {
+      if (manualBuilderEditingPlanId && manualBuilderState) renderManualBuilder();
+      else renderManualBuilderStart();
+    }
     if (viewName === 'log') renderLogSession();
     if (viewName === 'history') renderHistory();
     if (viewName === 'library') renderLibrary();
@@ -369,6 +372,7 @@ function renderPrograms() {
       <p class="text-xs mb-3" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')} &middot; ${new Date(plan.createdAt).toLocaleDateString()}</p>
       <div class="flex gap-2 mb-3">
         ${!plan.active ? `<button class="btn-secondary py-2 px-3 text-xs flex-1" onclick="setActiveProgram('${plan.id}')">Set active</button>` : ''}
+        ${plan.source === 'manual' ? `<button class="btn-secondary py-2 px-3 text-xs flex-1" onclick="editManualProgram('${plan.id}')">Edit</button>` : ''}
         <button class="btn-secondary py-2 px-3 text-xs flex-1" style="color: var(--accent-warn, #E8B23A);" onclick="deleteProgram('${plan.id}')">Delete</button>
       </div>
       ${renderPlanSessionHistory(plan, priorSessions, exercises)}
@@ -650,17 +654,37 @@ function renderGeneratedPlan(plan) {
    ============================================================ */
 
 let manualBuilderState = null;
+let manualBuilderEditingPlanId = null; // null = creating new; set = updating existing plan in place
 
 function emptyManualDay(dayNumber) {
   return { dayNumber, focus: '', exercises: [] };
 }
 
 function renderManualBuilderStart() {
+  manualBuilderEditingPlanId = null;
   manualBuilderState = {
     splitLabel: '',
     days: [emptyManualDay(1)],
   };
   renderManualBuilder();
+}
+
+// Loads an existing saved (manual) program back into the builder for editing,
+// preserving each exercise's actual saved targetSets/targetReps rather than
+// resetting them to the picker default of 3 sets / 8-12 reps.
+function editManualProgram(planId) {
+  const plan = Storage.getPlans().find(p => p.id === planId);
+  if (!plan) return;
+  manualBuilderEditingPlanId = planId;
+  manualBuilderState = {
+    splitLabel: plan.splitLabel || '',
+    days: plan.days.map(d => ({
+      dayNumber: d.dayNumber,
+      focus: d.focus || '',
+      exercises: d.exercises.map(ex => ({ ...ex })),
+    })),
+  };
+  Nav.go('manualBuilder');
 }
 
 function renderManualBuilder() {
@@ -819,7 +843,12 @@ function saveManualProgram() {
     source: 'manual',
   };
 
-  Storage.saveActivePlan(plan);
+  if (manualBuilderEditingPlanId) {
+    Storage.updatePlan(manualBuilderEditingPlanId, plan);
+  } else {
+    Storage.saveActivePlan(plan);
+  }
+  manualBuilderEditingPlanId = null;
   Nav.go('dashboard');
 }
 
@@ -854,6 +883,8 @@ function renderLogSession() {
   container.innerHTML = session.entries.map((entry, entryIdx) => {
     const ex = exercises.find(x => x.id === entry.exerciseId);
     const suggestion = Progression.suggestNextTarget({ exerciseId: entry.exerciseId, styleKey: session.trainingStyle });
+    const lastLogged = Storage.getLastSessionForExercise(entry.exerciseId);
+    const prevSets = lastLogged ? lastLogged.entry.sets.filter(s => !s.isWarmup) : [];
 
     return `
       <div class="card p-4">
@@ -879,16 +910,18 @@ function renderLogSession() {
             <span class="col-span-2 text-center">Warmup</span>
             <span class="col-span-1"></span>
           </div>
-          ${entry.sets.map((set, setIdx) => `
+          ${entry.sets.map((set, setIdx) => {
+            const prev = prevSets[setIdx];
+            return `
             <div class="grid grid-cols-12 gap-2 items-center">
               <span class="col-span-1 text-xs font-mono" style="color: var(--text-muted);">${setIdx + 1}</span>
-              <input class="col-span-3 font-mono tag-logged" type="number" inputmode="decimal" placeholder="kg"
+              <input class="col-span-3 font-mono tag-logged" type="number" inputmode="decimal" placeholder="${prev && prev.weight != null ? prev.weight : 'kg'}"
                      value="${set.weight ?? ''}"
                      onchange="updateSet(${entryIdx}, ${setIdx}, 'weight', this.value)">
-              <input class="col-span-3 font-mono tag-logged" type="number" inputmode="numeric" placeholder="reps"
+              <input class="col-span-3 font-mono tag-logged" type="number" inputmode="numeric" placeholder="${prev && prev.reps != null ? prev.reps : 'reps'}"
                      value="${set.reps ?? ''}"
                      onchange="updateSet(${entryIdx}, ${setIdx}, 'reps', this.value)">
-              <input class="col-span-2 font-mono" type="number" inputmode="numeric" placeholder="—" min="1" max="10"
+              <input class="col-span-2 font-mono" type="number" inputmode="numeric" placeholder="${prev && prev.rpe != null ? prev.rpe : '—'}" min="1" max="10"
                      value="${set.rpe ?? ''}"
                      onchange="updateSet(${entryIdx}, ${setIdx}, 'rpe', this.value)">
               <span class="col-span-2 flex justify-center">
@@ -898,7 +931,8 @@ function renderLogSession() {
               </span>
               <button class="col-span-1 text-xs" style="color: var(--text-muted);" onclick="removeSet(${entryIdx}, ${setIdx})">✕</button>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
         <button class="w-full btn-secondary mt-3 py-2 text-sm" onclick="addSetToEntry(${entryIdx})">+ Add set</button>
         <textarea class="w-full mt-3 text-sm" rows="2" placeholder="Notes (e.g. felt heavy, elbow pain, form cue)"

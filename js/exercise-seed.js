@@ -13,11 +13,11 @@ const SEED_EXERCISES = [
   { name: 'Incline Dumbbell Press', muscleGroup: 'Chest', equipment: 'Dumbbells', cues: '30-45 degree bench, targets upper chest.' },
   { name: 'Push-Up', muscleGroup: 'Chest', equipment: 'Bodyweight', cues: 'Straight line head to heels, elbows ~45 degrees.' },
   { name: 'Cable Fly', muscleGroup: 'Chest', equipment: 'Cable Machine', cues: 'Slight elbow bend, squeeze at midline.' },
-  { name: 'Dips', muscleGroup: 'Chest', equipment: 'Bodyweight', cues: 'Lean forward for chest emphasis, control the bottom.' },
+  { name: 'Dips', muscleGroup: 'Chest', equipment: 'Weighted Calisthenics', cues: 'Lean forward for chest emphasis, control the bottom. Add weight via belt/vest as bodyweight reps increase.' },
 
   // Back
   { name: 'Deadlift', muscleGroup: 'Back', equipment: 'Barbell', cues: 'Neutral spine, bar close to shins, drive through floor.' },
-  { name: 'Pull-Up', muscleGroup: 'Back', equipment: 'Bodyweight', cues: 'Full hang to chin over bar, avoid kipping.' },
+  { name: 'Pull-Up', muscleGroup: 'Back', equipment: 'Weighted Calisthenics', cues: 'Full hang to chin over bar, avoid kipping. Add weight via belt/vest as bodyweight reps increase.' },
   { name: 'Barbell Row', muscleGroup: 'Back', equipment: 'Barbell', cues: 'Hinge at hips, pull to lower ribs.' },
   { name: 'Lat Pulldown', muscleGroup: 'Back', equipment: 'Cable Machine', cues: 'Pull to upper chest, avoid leaning back excessively.' },
   { name: 'Seated Cable Row', muscleGroup: 'Back', equipment: 'Cable Machine', cues: 'Chest up, pull to torso, squeeze shoulder blades.' },
