@@ -5,6 +5,27 @@
    current storage state. Simple, debuggable, no virtual DOM.
    ============================================================ */
 
+/* ---------------- Escaping helper ----------------
+   Every user-generated or exercise-library string (names, notes, custom
+   requests, chat messages) gets funneled through this before landing in
+   innerHTML. Without it, a name like `Curl <img src=x onerror=...>` or
+   one containing a stray quote either breaks an onclick="...('${id}')"
+   attribute outright or, worse, injects arbitrary HTML/script that
+   persists in localStorage and re-fires on every future render. */
+function escapeHTML(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+// Kept as an alias — used historically for attribute values specifically,
+// but the same escaping is safe (and necessary) in text content too.
+function escapeAttr(str) {
+  return escapeHTML(str);
+}
+
 /* ---------------- Init ---------------- */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,6 +37,20 @@ document.addEventListener('DOMContentLoaded', () => {
   renderSettingsForm();
   document.getElementById('addExerciseToSessionBtn').addEventListener('click', openExercisePickerForSession);
   document.getElementById('finishSessionBtn').addEventListener('click', finishSession);
+  document.getElementById('settingsBtn').addEventListener('click', () => Nav.go('settings'));
+
+  // If the tab is left open across midnight, "today's" meals/weight would
+  // otherwise stay stuck on whatever day the view last rendered — recheck
+  // the calendar day whenever the tab regains focus/visibility.
+  let lastKnownDay = new Date().toDateString();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    const today = new Date().toDateString();
+    if (today !== lastKnownDay) {
+      lastKnownDay = today;
+      if (Nav.current === 'nutrition') renderNutrition();
+    }
+  });
 });
 
 /* ---------------- Navigation ---------------- */
@@ -40,13 +75,13 @@ const Nav = {
     if (viewName === 'library') renderLibrary();
     if (viewName === 'programs') renderPrograms();
     if (viewName === 'chat') renderChatView();
+    if (viewName === 'nutrition') renderNutrition();
+    if (viewName === 'nutritionProfile') renderNutritionProfileForm();
     if (viewName === 'settings') { renderThemeGrid(); renderSettingsForm(); }
 
     window.scrollTo(0, 0);
   },
 };
-
-document.getElementById('settingsBtn').addEventListener('click', () => Nav.go('settings'));
 
 /* ============================================================
    DASHBOARD
@@ -75,8 +110,8 @@ function renderDashboard() {
     planCard.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <div>
-          <p class="font-display font-semibold">${plan.splitLabel}</p>
-          <p class="text-xs" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')}</p>
+          <p class="font-display font-semibold">${escapeHTML(plan.splitLabel)}</p>
+          <p class="text-xs" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${escapeHTML((plan.goal || '').replace('_',' '))}</p>
         </div>
         <div class="flex items-center gap-3">
           <button class="text-xs" style="color: var(--text-muted);" onclick="Nav.go('programs')">My programs</button>
@@ -91,7 +126,7 @@ function renderDashboard() {
             : 'Not logged yet';
           return `
           <button class="btn-primary py-2.5 text-sm text-left px-3 flex items-center justify-between" onclick="startSessionFromPlanDay(${day.dayNumber})">
-            <span>Day ${day.dayNumber}: ${day.focus}</span>
+            <span>Day ${day.dayNumber}: ${escapeHTML(day.focus)}</span>
             <span class="text-xs opacity-80">${day.exercises.length} ex &middot; ${lastLabel}</span>
           </button>`;
         }).join('')}
@@ -147,7 +182,7 @@ function renderDashboard() {
     recentEl.innerHTML = recentSessions.map(s => {
       const exNames = s.entries.map(e => {
         const ex = exercises.find(x => x.id === e.exerciseId);
-        return ex ? ex.name : 'Unknown exercise';
+        return escapeHTML(ex ? ex.name : 'Unknown exercise');
       }).slice(0, 3).join(', ');
       const dateLabel = new Date(s.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       return `
@@ -290,14 +325,14 @@ function showRepeatOverloadResults(results, continueCallback) {
             const weightLabel = r.baseline.suggestedWeight !== null ? `${r.baseline.suggestedWeight}kg` : 'n/a';
             return `
               <div class="p-3 rounded-lg" style="background: var(--bg-elevated);">
-                <p class="text-sm font-medium">${r.name}</p>
-                <p class="text-xs font-mono tag-logged mt-1">Target: ${weightLabel} × ${r.baseline.suggestedReps}, ${r.baseline.suggestedSets} sets</p>
-                <p class="text-xs mt-1" style="color: var(--text-muted);">${r.baseline.message}</p>
+                <p class="text-sm font-medium">${escapeHTML(r.name)}</p>
+                <p class="text-xs font-mono tag-logged mt-1">Target: ${weightLabel} × ${escapeHTML(String(r.baseline.suggestedReps))}, ${r.baseline.suggestedSets} sets</p>
+                <p class="text-xs mt-1" style="color: var(--text-muted);">${escapeHTML(r.baseline.message)}</p>
                 ${r.ai ? `
                   <div class="mt-2 pt-2 border-t" style="border-color: var(--border);">
                     <p class="text-xs tag-suggest font-medium">✨ AI ${r.ai.agreesWithBaseline ? 'agrees' : 'suggests an adjustment'}</p>
-                    <p class="text-xs mt-0.5">${r.ai.suggestedWeight !== null ? r.ai.suggestedWeight + 'kg' : 'n/a'} × ${r.ai.suggestedReps}, ${r.ai.suggestedSets} sets</p>
-                    <p class="text-xs mt-1" style="color: var(--text-muted);">${r.ai.reasoning}</p>
+                    <p class="text-xs mt-0.5">${r.ai.suggestedWeight !== null ? r.ai.suggestedWeight + 'kg' : 'n/a'} × ${escapeHTML(String(r.ai.suggestedReps))}, ${r.ai.suggestedSets} sets</p>
+                    <p class="text-xs mt-1" style="color: var(--text-muted);">${escapeHTML(r.ai.reasoning)}</p>
                   </div>` : ''}
               </div>`;
           }).join('')}
@@ -376,13 +411,13 @@ function renderPlanSessionHistory(plan, priorSessions, exercises) {
     const lifts = item.session.entries.map(entry => {
       const ex = exercises.find(x => x.id === entry.exerciseId);
       const setsLabel = entry.sets.map(set => `${set.weight ?? '—'}kg×${set.reps ?? '—'}`).join(', ');
-      const noteLabel = entry.notes ? ` — 📝 ${entry.notes}` : '';
-      return `${ex ? ex.name : 'exercise'}: ${setsLabel || '—'}${noteLabel}`;
+      const noteLabel = entry.notes ? ` — 📝 ${escapeHTML(entry.notes)}` : '';
+      return `${escapeHTML(ex ? ex.name : 'exercise')}: ${setsLabel || '—'}${noteLabel}`;
     }).join(' | ');
     return `
       <div class="py-1.5 border-b" style="border-color: var(--border);">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-medium">${dateLabel} &middot; Day ${item.dayNumber}: ${item.focus}</span>
+          <span class="text-xs font-medium">${dateLabel} &middot; Day ${item.dayNumber}: ${escapeHTML(item.focus)}</span>
         </div>
         <p class="text-xs mt-0.5" style="color: var(--text-muted);">${lifts}</p>
       </div>`;
@@ -585,19 +620,19 @@ function renderGeneratedPlan(plan) {
   el.innerHTML = `
     <div class="space-y-3">
       <div class="card p-4">
-        <p class="font-display font-bold text-lg">${plan.splitLabel}</p>
-        <p class="text-sm" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${plan.goal.replace('_',' ')}</p>
-        ${plan.coachNote ? `<p class="text-xs mt-2 tag-logged">${plan.coachNote}</p>` : ''}
-        ${plan.customRequest ? `<p class="text-xs mt-2" style="color: var(--text-muted);">Your notes: ${plan.customRequest}</p>` : ''}
-        ${plan.warnings.length ? `<p class="text-xs mt-2 tag-suggest">${plan.warnings.join(' ')}</p>` : ''}
+        <p class="font-display font-bold text-lg">${escapeHTML(plan.splitLabel)}</p>
+        <p class="text-sm" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${escapeHTML(plan.goal.replace('_',' '))}</p>
+        ${plan.coachNote ? `<p class="text-xs mt-2 tag-logged">${escapeHTML(plan.coachNote)}</p>` : ''}
+        ${plan.customRequest ? `<p class="text-xs mt-2" style="color: var(--text-muted);">Your notes: ${escapeHTML(plan.customRequest)}</p>` : ''}
+        ${plan.warnings.length ? `<p class="text-xs mt-2 tag-suggest">${escapeHTML(plan.warnings.join(' '))}</p>` : ''}
       </div>
       ${plan.days.map(day => `
         <div class="card p-4">
-          <p class="font-display font-semibold mb-2">Day ${day.dayNumber}: ${day.focus}</p>
+          <p class="font-display font-semibold mb-2">Day ${day.dayNumber}: ${escapeHTML(day.focus)}</p>
           <div class="space-y-1.5">
             ${day.exercises.map(ex => `
               <div class="flex items-center justify-between text-sm py-1.5 border-b" style="border-color: var(--border);">
-                <span>${ex.name}</span>
+                <span>${escapeHTML(ex.name)}</span>
                 <span class="font-mono text-xs" style="color: var(--text-muted);">${ex.targetSets}×${ex.targetReps}</span>
               </div>
             `).join('')}
@@ -651,7 +686,7 @@ function renderManualBuilder() {
           ${day.exercises.map((ex, exIdx) => `
             <div class="p-3 rounded-lg space-y-2" style="background: var(--bg-elevated);">
               <div class="flex items-center justify-between">
-                <p class="text-sm font-medium">${ex.name}</p>
+                <p class="text-sm font-medium">${escapeHTML(ex.name)}</p>
                 <button class="text-xs" style="color: var(--text-muted);" onclick="removeManualExercise(${dayIdx}, ${exIdx})">Remove</button>
               </div>
               <div class="grid grid-cols-2 gap-2">
@@ -675,10 +710,6 @@ function renderManualBuilder() {
     <button class="w-full btn-secondary py-3" onclick="addManualDay()">+ Add day</button>
     <button class="w-full btn-primary py-3" onclick="saveManualProgram()">Save program</button>
   `;
-}
-
-function escapeAttr(str) {
-  return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
 function addManualDay() {
@@ -731,8 +762,8 @@ function renderManualPickerList(dayIdx, list) {
   }
   el.innerHTML = list.map(ex => `
     <button class="w-full text-left p-3 rounded-lg btn-secondary flex items-center justify-between" onclick="pickExerciseForManualDay(${dayIdx}, '${ex.id}')">
-      <span class="text-sm">${ex.name}</span>
-      <span class="text-xs" style="color: var(--text-muted);">${ex.muscleGroup}</span>
+      <span class="text-sm">${escapeHTML(ex.name)}</span>
+      <span class="text-xs" style="color: var(--text-muted);">${escapeHTML(ex.muscleGroup)}</span>
     </button>`).join('');
 }
 
@@ -796,12 +827,21 @@ function saveManualProgram() {
    LOG SESSION (the core, highest-friction-sensitivity screen)
    ============================================================ */
 
+// Bumped every time the log-session view is (re)rendered. Async coaching
+// narration calls capture the value at fetch time and check it back against
+// the current value before writing into the DOM, so a response that resolves
+// after the user has added/removed/reordered exercises (which shifts what
+// entryIdx N actually points at) can't land on the wrong card — or a stale
+// one — after a re-render.
+let logSessionRenderGen = 0;
+
 function renderLogSession() {
   let session = Storage.getActiveSession();
   if (!session) session = Storage.startNewSession();
 
   const container = document.getElementById('logSessionContent');
   const exercises = Storage.getExercises();
+  const thisGen = ++logSessionRenderGen;
 
   if (session.entries.length === 0) {
     container.innerHTML = `
@@ -818,13 +858,13 @@ function renderLogSession() {
     return `
       <div class="card p-4">
         <div class="flex items-center justify-between mb-2">
-          <p class="font-display font-semibold">${ex ? ex.name : 'Exercise'}</p>
+          <p class="font-display font-semibold">${escapeHTML(ex ? ex.name : 'Exercise')}</p>
           <button class="text-xs" style="color: var(--text-muted);" onclick="removeExerciseFromSession(${entryIdx})">Remove</button>
         </div>
 
         <div class="flex items-center gap-2 mb-2 p-2 rounded-lg" style="background: color-mix(in srgb, var(--accent-suggest) 10%, transparent);">
           <span class="dot-suggest w-2 h-2 rounded-full flex-shrink-0"></span>
-          <p class="text-xs tag-suggest" id="coachNote-${entryIdx}">${suggestion.message}</p>
+          <p class="text-xs tag-suggest" id="coachNote-${entryIdx}">${escapeHTML(suggestion.message)}</p>
         </div>
         <div id="aiOverload-${entryIdx}" class="mb-3">
           <button class="text-xs" style="color: var(--text-muted);" onclick="requestAIOverload(${entryIdx}, '${entry.exerciseId}')">✨ Ask AI to review this target</button>
@@ -833,30 +873,36 @@ function renderLogSession() {
         <div class="space-y-2">
           <div class="grid grid-cols-12 gap-2 text-[10px] uppercase tracking-wide px-1" style="color: var(--text-muted);">
             <span class="col-span-1">#</span>
-            <span class="col-span-4">Weight</span>
-            <span class="col-span-4">Reps</span>
+            <span class="col-span-3">Weight</span>
+            <span class="col-span-3">Reps</span>
             <span class="col-span-2">RPE</span>
+            <span class="col-span-2 text-center">Warmup</span>
             <span class="col-span-1"></span>
           </div>
           ${entry.sets.map((set, setIdx) => `
             <div class="grid grid-cols-12 gap-2 items-center">
               <span class="col-span-1 text-xs font-mono" style="color: var(--text-muted);">${setIdx + 1}</span>
-              <input class="col-span-4 font-mono tag-logged" type="number" inputmode="decimal" placeholder="kg"
+              <input class="col-span-3 font-mono tag-logged" type="number" inputmode="decimal" placeholder="kg"
                      value="${set.weight ?? ''}"
                      onchange="updateSet(${entryIdx}, ${setIdx}, 'weight', this.value)">
-              <input class="col-span-4 font-mono tag-logged" type="number" inputmode="numeric" placeholder="reps"
+              <input class="col-span-3 font-mono tag-logged" type="number" inputmode="numeric" placeholder="reps"
                      value="${set.reps ?? ''}"
                      onchange="updateSet(${entryIdx}, ${setIdx}, 'reps', this.value)">
               <input class="col-span-2 font-mono" type="number" inputmode="numeric" placeholder="—" min="1" max="10"
                      value="${set.rpe ?? ''}"
                      onchange="updateSet(${entryIdx}, ${setIdx}, 'rpe', this.value)">
+              <span class="col-span-2 flex justify-center">
+                <input type="checkbox" class="w-4 h-4" ${set.isWarmup ? 'checked' : ''}
+                       title="Mark as warmup (excluded from progression suggestions)"
+                       onchange="updateSetWarmup(${entryIdx}, ${setIdx}, this.checked)">
+              </span>
               <button class="col-span-1 text-xs" style="color: var(--text-muted);" onclick="removeSet(${entryIdx}, ${setIdx})">✕</button>
             </div>
           `).join('')}
         </div>
         <button class="w-full btn-secondary mt-3 py-2 text-sm" onclick="addSetToEntry(${entryIdx})">+ Add set</button>
         <textarea class="w-full mt-3 text-sm" rows="2" placeholder="Notes (e.g. felt heavy, elbow pain, form cue)"
-                  onchange="updateEntryNotes(${entryIdx}, this.value)">${entry.notes || ''}</textarea>
+                  onchange="updateEntryNotes(${entryIdx}, this.value)">${escapeHTML(entry.notes || '')}</textarea>
       </div>`;
   }).join('');
 
@@ -866,10 +912,17 @@ function renderLogSession() {
       const ex = exercises.find(x => x.id === entry.exerciseId);
       const suggestion = Progression.suggestNextTarget({ exerciseId: entry.exerciseId, styleKey: session.trainingStyle });
       const narration = await CoachNarration.narrateCoachingFeedback({ exerciseName: ex ? ex.name : 'exercise', suggestion, profile });
+      if (logSessionRenderGen !== thisGen) return; // view changed underneath this call — discard
       const noteEl = document.getElementById(`coachNote-${entryIdx}`);
       if (narration.ok && noteEl) noteEl.textContent = narration.text;
     });
   }
+}
+
+function updateSetWarmup(entryIdx, setIdx, checked) {
+  const session = Storage.getActiveSession();
+  session.entries[entryIdx].sets[setIdx].isWarmup = !!checked;
+  Storage.saveActiveSession(session);
 }
 
 async function requestAIOverload(entryIdx, exerciseId) {
@@ -878,6 +931,7 @@ async function requestAIOverload(entryIdx, exerciseId) {
   const el = document.getElementById(`aiOverload-${entryIdx}`);
   if (!el) return;
   el.innerHTML = `<p class="text-xs" style="color: var(--text-muted);">Checking with AI…</p>`;
+  const thisGen = logSessionRenderGen; // capture: if the view re-renders before this resolves, discard the result
 
   const session = Storage.getActiveSession();
   const exercises = Storage.getExercises();
@@ -891,8 +945,12 @@ async function requestAIOverload(entryIdx, exerciseId) {
     profile,
   });
 
+  if (logSessionRenderGen !== thisGen) return; // stale — the log view changed underneath this call
+  const liveEl = document.getElementById(`aiOverload-${entryIdx}`);
+  if (!liveEl) return;
+
   if (!result.ok) {
-    el.innerHTML = `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't get an AI suggestion (${result.error === 'missing_key' ? 'no API key' : result.error}).</p>`;
+    liveEl.innerHTML = `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't get an AI suggestion (${escapeHTML(result.error === 'missing_key' ? 'no API key' : result.error)}).</p>`;
     return;
   }
 
@@ -900,11 +958,11 @@ async function requestAIOverload(entryIdx, exerciseId) {
   const weightLabel = s.suggestedWeight !== null ? `${s.suggestedWeight}kg` : 'no change';
   const agreeLabel = s.agreesWithBaseline ? 'Agrees with the baseline' : 'Suggests an adjustment';
 
-  el.innerHTML = `
+  liveEl.innerHTML = `
     <div class="p-2 rounded-lg text-xs" style="background: color-mix(in srgb, var(--accent-logged) 10%, transparent); color: var(--text);">
       <p class="font-medium mb-0.5">✨ AI suggestion — ${agreeLabel}</p>
-      <p>${weightLabel} × ${s.suggestedReps}, ${s.suggestedSets} sets</p>
-      <p class="mt-1" style="color: var(--text-muted);">${s.reasoning}</p>
+      <p>${weightLabel} × ${escapeHTML(String(s.suggestedReps))}, ${s.suggestedSets} sets</p>
+      <p class="mt-1" style="color: var(--text-muted);">${escapeHTML(s.reasoning)}</p>
     </div>`;
 }
 
@@ -972,8 +1030,8 @@ function renderPickerList(list) {
   }
   el.innerHTML = list.map(ex => `
     <button class="w-full text-left p-3 rounded-lg btn-secondary flex items-center justify-between" onclick="pickExerciseForSession('${ex.id}')">
-      <span class="text-sm">${ex.name}</span>
-      <span class="text-xs" style="color: var(--text-muted);">${ex.muscleGroup}</span>
+      <span class="text-sm">${escapeHTML(ex.name)}</span>
+      <span class="text-xs" style="color: var(--text-muted);">${escapeHTML(ex.muscleGroup)}</span>
     </button>`).join('');
 }
 
@@ -1006,6 +1064,18 @@ function confirmLeaveSession() {
 async function finishSession() {
   const session = Storage.getActiveSession();
   if (!session || session.entries.length === 0) {
+    Nav.go('dashboard');
+    return;
+  }
+
+  // Drop exercises that were added but never actually logged (no weight and
+  // no reps on any set) — these would otherwise sit in history as a phantom
+  // "session" for that exercise and skew future progression comparisons.
+  session.entries = session.entries.filter(entry =>
+    entry.sets.some(s => s.weight != null || s.reps != null)
+  );
+  if (session.entries.length === 0) {
+    Storage.clearActiveSession();
     Nav.go('dashboard');
     return;
   }
@@ -1044,14 +1114,14 @@ function showPostWorkoutSummary(rows, aiNote) {
     <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
       <div class="card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
         <p class="font-display font-bold text-lg">Session complete</p>
-        ${aiNote ? `<p class="text-sm tag-logged">${aiNote}</p>` : (GeminiClient.hasGeminiKey() ? `<p class="text-xs" style="color: var(--text-muted);">Getting your coach's take...</p>` : '')}
+        ${aiNote ? `<p class="text-sm tag-logged">${escapeHTML(aiNote)}</p>` : (GeminiClient.hasGeminiKey() ? `<p class="text-xs" style="color: var(--text-muted);">Getting your coach's take...</p>` : '')}
         <div class="space-y-2">
           ${rows.map(r => {
             const info = labelFor[r.classification] || labelFor.first_time;
             return `
               <div class="p-3 rounded-lg" style="background: var(--bg-elevated);">
                 <div class="flex items-center justify-between">
-                  <p class="text-sm font-medium">${r.name}</p>
+                  <p class="text-sm font-medium">${escapeHTML(r.name)}</p>
                   <span class="text-xs font-medium" style="color: ${info.color};">${info.text}</span>
                 </div>
                 ${r.topSet ? `<p class="text-xs font-mono mt-1" style="color: var(--text-muted);">Top set: ${r.topSet.weight ?? '—'}kg × ${r.topSet.reps ?? '—'}</p>` : ''}
@@ -1089,10 +1159,10 @@ function renderHistory() {
             return `
               <div class="text-sm">
                 <div class="flex items-center justify-between">
-                  <span>${ex ? ex.name : 'Exercise'}</span>
+                  <span>${escapeHTML(ex ? ex.name : 'Exercise')}</span>
                   <span class="font-mono text-xs tag-logged">${setsLabel || '—'}</span>
                 </div>
-                ${entry.notes ? `<p class="text-xs mt-0.5" style="color: var(--text-muted);">📝 ${entry.notes}</p>` : ''}
+                ${entry.notes ? `<p class="text-xs mt-0.5" style="color: var(--text-muted);">📝 ${escapeHTML(entry.notes)}</p>` : ''}
               </div>`;
           }).join('')}
         </div>
@@ -1117,15 +1187,15 @@ function renderLibrary() {
 
   el.innerHTML = Object.keys(groups).sort().map(group => `
     <div>
-      <p class="text-xs uppercase tracking-wide mb-1.5 mt-3" style="color: var(--text-muted);">${group}</p>
+      <p class="text-xs uppercase tracking-wide mb-1.5 mt-3" style="color: var(--text-muted);">${escapeHTML(group)}</p>
       <div class="space-y-1.5">
         ${groups[group].map(ex => `
           <div class="card p-3">
             <div class="flex items-center justify-between">
-              <p class="text-sm font-medium">${ex.name}</p>
-              <span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--bg-elevated); color: var(--text-muted);">${ex.equipment}</span>
+              <p class="text-sm font-medium">${escapeHTML(ex.name)}</p>
+              <span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--bg-elevated); color: var(--text-muted);">${escapeHTML(ex.equipment)}</span>
             </div>
-            ${ex.cues ? `<p class="text-xs mt-1" style="color: var(--text-muted);">${ex.cues}</p>` : ''}
+            ${ex.cues ? `<p class="text-xs mt-1" style="color: var(--text-muted);">${escapeHTML(ex.cues)}</p>` : ''}
           </div>
         `).join('')}
       </div>
@@ -1258,6 +1328,7 @@ function submitKeyPrompt() {
    ============================================================ */
 
 let chatHistory = [];
+let chatSendInFlight = false; // prevents overlapping sendChatMessage() calls from corrupting history
 
 function renderChatView() {
   const el = document.getElementById('chatMessages');
@@ -1267,7 +1338,7 @@ function renderChatView() {
     el.innerHTML = chatHistory.map(m => `
       <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
         <div class="card p-3 max-w-[85%] text-sm" style="${m.role === 'user' ? 'background: var(--accent-logged); color: #0E0F12; border: none;' : ''}">
-          ${m.text}
+          ${escapeHTML(m.text)}
         </div>
       </div>`).join('');
   }
@@ -1275,6 +1346,8 @@ function renderChatView() {
 }
 
 async function sendChatMessage() {
+  if (chatSendInFlight) return; // ignore double-taps / double-Enter while a message is in flight
+
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;
@@ -1284,20 +1357,517 @@ async function sendChatMessage() {
     return;
   }
 
+  chatSendInFlight = true;
+  input.disabled = true;
+
   chatHistory.push({ role: 'user', text });
   input.value = '';
   renderChatView();
 
-  chatHistory.push({ role: 'assistant', text: 'Thinking...' });
+  // Tagged placeholder (not a bare positional push) so it can be found and
+  // replaced by identity rather than by "last item in the array" — safe
+  // even if something else mutates chatHistory while this call is pending.
+  const placeholder = { role: 'assistant', text: 'Thinking...', pending: true };
+  chatHistory.push(placeholder);
   renderChatView();
 
-  const result = await Chatbot.askChatbot(text, chatHistory.slice(0, -2));
-  chatHistory.pop(); // remove "Thinking..."
+  try {
+    const result = await Chatbot.askChatbot(text, chatHistory.filter(m => !m.pending));
+    const idx = chatHistory.indexOf(placeholder);
+    const replacement = result.ok
+      ? { role: 'assistant', text: result.text }
+      : { role: 'assistant', text: `Couldn't reach the coach: ${result.error === 'missing_key' ? 'no API key set.' : result.error}` };
+    if (idx !== -1) chatHistory[idx] = replacement;
+    else chatHistory.push(replacement); // placeholder was somehow removed — still show the answer
+  } finally {
+    chatSendInFlight = false;
+    input.disabled = false;
+    renderChatView();
+    input.focus();
+  }
+}
+
+/* ============================================================
+   NUTRITION
+   Profile form feeds Nutrition.calculateTargets() (nutrition.js);
+   dashboard shows today's logged meals against those targets.
+   Meal logging here is manual-entry only — photo/AI estimation
+   (meal-vision.js) is a separate, not-yet-built piece; the button
+   below says so rather than pretending to offer it.
+   ============================================================ */
+
+const MEAL_CATEGORIES = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
+
+function renderNutritionProfileForm() {
+  const profile = Storage.getProfile();
+  const container = document.getElementById('nutritionProfileForm');
+
+  container.innerHTML = `
+    <div class="card p-4 space-y-3">
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Age</label>
+        <input type="number" inputmode="numeric" id="nutAge" placeholder="e.g. 28" value="${profile.age ?? ''}">
+      </div>
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Sex</label>
+        <select id="nutSex">
+          <option value="">Select…</option>
+          <option value="male" ${profile.sex === 'male' ? 'selected' : ''}>Male</option>
+          <option value="female" ${profile.sex === 'female' ? 'selected' : ''}>Female</option>
+          <option value="other" ${profile.sex === 'other' ? 'selected' : ''}>Other / prefer not to say</option>
+        </select>
+        <p class="text-xs mt-1" style="color: var(--text-muted);">Only used to estimate calorie needs (Mifflin-St Jeor). "Other" uses a neutral midpoint estimate.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Weight (kg)</label>
+          <input type="number" inputmode="decimal" id="nutWeight" placeholder="e.g. 72" value="${profile.weightKg ?? ''}">
+        </div>
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Height (cm)</label>
+          <input type="number" inputmode="decimal" id="nutHeight" placeholder="e.g. 175" value="${profile.heightCm ?? ''}">
+        </div>
+      </div>
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Activity level</label>
+        <select id="nutActivity">
+          ${Object.entries(Nutrition.ACTIVITY_MULTIPLIERS).map(([key, a]) => `
+            <option value="${key}" ${profile.activityLevel === key ? 'selected' : ''}>${a.label}</option>
+          `).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Goal</label>
+        <select id="nutGoal">
+          ${Object.entries(Nutrition.GOAL_ADJUSTMENTS).map(([key, g]) => `
+            <option value="${key}" ${(profile.nutritionGoal || 'maintain') === key ? 'selected' : ''}>${g.label}</option>
+          `).join('')}
+        </select>
+      </div>
+      <button class="btn-primary w-full py-2 text-sm" onclick="saveNutritionProfileForm()">Calculate targets</button>
+      <p id="nutritionFormStatus" class="text-xs"></p>
+    </div>
+  `;
+}
+
+function saveNutritionProfileForm() {
+  const age = parseInt(document.getElementById('nutAge').value, 10);
+  const sex = document.getElementById('nutSex').value;
+  const weightKg = parseFloat(document.getElementById('nutWeight').value);
+  const heightCm = parseFloat(document.getElementById('nutHeight').value);
+  const activityLevel = document.getElementById('nutActivity').value;
+  const nutritionGoal = document.getElementById('nutGoal').value;
+
+  const status = document.getElementById('nutritionFormStatus');
+
+  Storage.saveProfile({
+    age: Number.isFinite(age) ? age : null,
+    sex: sex || null,
+    weightKg: Number.isFinite(weightKg) ? weightKg : null,
+    heightCm: Number.isFinite(heightCm) ? heightCm : null,
+    activityLevel: activityLevel || 'moderate',
+    nutritionGoal: nutritionGoal || 'maintain',
+  });
+
+  const updatedProfile = Storage.getProfile();
+  if (!Nutrition.hasCompleteProfileForCalc(updatedProfile)) {
+    status.textContent = 'Saved — fill in age, sex, weight, and height to calculate targets.';
+    status.style.color = 'var(--text-muted)';
+    return;
+  }
+
+  Nutrition.recalculateAndSaveTargets();
+  status.textContent = 'Targets updated.';
+  status.style.color = 'var(--accent-success)';
+  setTimeout(() => Nav.go('nutrition'), 500);
+}
+
+function renderNutrition() {
+  const container = document.getElementById('nutritionContent');
+  const profile = Storage.getProfile();
+  const nutritionProfile = Storage.getNutritionProfile();
+
+  if (!Nutrition.hasCompleteProfileForCalc(profile) || nutritionProfile.calorieTarget == null) {
+    container.innerHTML = `
+      <div class="card p-6 text-center space-y-3">
+        <p class="font-display text-lg font-semibold">Set up your targets</p>
+        <p class="text-sm" style="color: var(--text-muted);">A few basics (age, sex, weight, height) let us estimate a daily calorie and macro range to track against.</p>
+        <button class="btn-primary" onclick="Nav.go('nutritionProfile')">Set up nutrition</button>
+      </div>`;
+    return;
+  }
+
+  const todaysMeals = Storage.getMealsForDate();
+  const totals = todaysMeals.reduce((acc, m) => {
+    acc.calories += m.calories || 0;
+    acc.protein += m.protein || 0;
+    acc.carbs += m.carbs || 0;
+    acc.fats += m.fats || 0;
+    return acc;
+  }, { calories: 0, protein: 0, carbs: 0, fats: 0 });
+
+  const macroRow = (label, consumed, target, unit = 'g') => `
+    <div>
+      <div class="flex items-center justify-between text-xs mb-1">
+        <span style="color: var(--text-muted);">${label}</span>
+        <span class="font-mono">${Math.round(consumed)}${unit} / ${target ?? '—'}${unit}</span>
+      </div>
+      <div class="h-1.5 rounded-full" style="background: var(--bg-elevated);">
+        <div class="h-1.5 rounded-full" style="width: ${target ? Math.min(100, (consumed / target) * 100) : 0}%; background: var(--accent-logged);"></div>
+      </div>
+    </div>`;
+
+  container.innerHTML = `
+    <div class="card p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <span class="text-sm" style="color: var(--text-muted);">Today</span>
+        <span class="text-sm font-mono">${Math.round(totals.calories)} / ${nutritionProfile.calorieTarget} kcal</span>
+      </div>
+      <div class="h-2 rounded-full" style="background: var(--bg-elevated);">
+        <div class="h-2 rounded-full" style="width: ${Math.min(100, (totals.calories / nutritionProfile.calorieTarget) * 100)}%; background: var(--accent-suggest);"></div>
+      </div>
+      <div class="space-y-2 pt-1">
+        ${macroRow('Protein', totals.protein, nutritionProfile.proteinTarget)}
+        ${macroRow('Carbs', totals.carbs, nutritionProfile.carbsTarget)}
+        ${macroRow('Fats', totals.fats, nutritionProfile.fatsTarget)}
+      </div>
+    </div>
+
+    ${renderWeightTrackerCard()}
+    <div id="weightTrendCard"></div>
+
+    <button class="w-full btn-secondary py-3 flex items-center justify-center gap-2" onclick="openLogMealModal()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+      Log a meal
+    </button>
+
+    <div class="card p-4">
+      <p class="font-display font-semibold text-sm mb-3">Today's meals</p>
+      <div id="todaysMealsList" class="space-y-2">
+        ${todaysMeals.length === 0
+          ? `<p class="text-sm" style="color: var(--text-muted);">Nothing logged yet today.</p>`
+          : todaysMeals.map(m => `
+            <div class="flex items-center justify-between py-2 border-b" style="border-color: var(--border);">
+              <div>
+                <p class="text-sm font-medium">${escapeHTML(m.label || m.category)}</p>
+                <p class="text-xs" style="color: var(--text-muted);">${escapeHTML(m.category)}${m.estimateRange ? ` · estimated ${m.estimateRange.caloriesLow}–${m.estimateRange.caloriesHigh} kcal` : ''}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-sm font-mono">${m.calories != null ? Math.round(m.calories) + ' kcal' : '—'}</p>
+                <button class="text-xs" style="color: var(--text-muted);" onclick="deleteMealAndRefresh('${m.id}')">Remove</button>
+              </div>
+            </div>`).join('')}
+      </div>
+    </div>
+  `;
+
+  renderWeightTrendCard();
+}
+
+function deleteMealAndRefresh(mealId) {
+  Storage.deleteMeal(mealId);
+  renderNutrition();
+}
+
+/* ---------------- Weight tracker ---------------- */
+
+function renderWeightTrackerCard() {
+  const logs = Storage.getRecentWeightLogs(8);
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  const todayStr = new Date().toDateString();
+  const todaysLog = logs.find(w => new Date(w.date).toDateString() === todayStr);
+  const displayWeight = (kg) => settings.units === 'lb' ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
+
+  return `
+    <div class="card p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <p class="font-display font-semibold text-sm">Weight</p>
+        <span class="text-xs" style="color: var(--text-muted);">${logs.length ? `Last: ${displayWeight(logs[logs.length - 1].weightKg)}${unitLabel}` : 'No check-ins yet'}</span>
+      </div>
+      <div class="flex gap-2">
+        <input type="number" inputmode="decimal" id="quickWeightInput" placeholder="${todaysLog ? displayWeight(todaysLog.weightKg) : `Today's weight (${unitLabel})`}" value="${todaysLog ? displayWeight(todaysLog.weightKg) : ''}">
+        <button class="btn-primary px-4 text-sm" onclick="logWeightFromDashboard()">Log</button>
+      </div>
+      ${logs.length > 1 ? `
+        <div class="flex items-end gap-1" style="height: 40px;">
+          ${(() => {
+            const weights = logs.map(w => w.weightKg);
+            const min = Math.min(...weights), max = Math.max(...weights);
+            const range = max - min || 1;
+            return logs.map(w => {
+              const h = 6 + ((w.weightKg - min) / range) * 34;
+              return `<div class="flex-1 rounded-t" style="height: ${h}px; background: var(--accent-logged); opacity: 0.7;" title="${escapeAttr(new Date(w.date).toLocaleDateString() + ': ' + displayWeight(w.weightKg) + unitLabel)}"></div>`;
+            }).join('');
+          })()}
+        </div>
+      ` : ''}
+    </div>`;
+}
+
+function logWeightFromDashboard() {
+  const input = document.getElementById('quickWeightInput');
+  const raw = parseFloat(input.value);
+  if (!Number.isFinite(raw) || raw <= 0) return;
+
+  const settings = Storage.getSettings();
+  const weightKg = settings.units === 'lb' ? raw / 2.20462 : raw;
+
+  Storage.addWeightLog({ weightKg });
+  // Keep the training profile's weightKg in sync so BMR/TDEE calculations
+  // (nutrition.js) reflect the latest check-in without a separate edit —
+  // same shallow-merge save used everywhere else in the app.
+  Storage.saveProfile({ weightKg: Math.round(weightKg * 10) / 10 });
+
+  renderNutrition();
+}
+
+/* ---------------- Weight trend & calorie adjustment suggestion ---------------- */
+
+let weightTrendRenderGen = 0;
+
+function renderWeightTrendCard() {
+  const container = document.getElementById('weightTrendCard');
+  if (!container) return;
+  const thisGen = ++weightTrendRenderGen;
+
+  const trend = Nutrition.analyzeWeightTrend();
+
+  if (trend.status !== 'ok' || trend.pace === 'on_track') {
+    container.innerHTML = '';
+    return;
+  }
+
+  const settings = Storage.getSettings();
+  const displayDelta = (kgPerWeek) => {
+    const val = settings.units === 'lb' ? kgPerWeek * 2.20462 : kgPerWeek;
+    return `${val > 0 ? '+' : ''}${Math.round(val * 100) / 100}${settings.units === 'lb' ? 'lb' : 'kg'}/week`;
+  };
+
+  const fallbackMessage = trend.pace === 'wrong_direction'
+    ? `Your logged weight is trending the opposite way from your ${trend.goalKey} goal (${displayDelta(trend.actualWeeklyKg)}). This could just be normal fluctuation — but if it holds up, a target closer to ${trend.suggestedCalorieTarget} kcal is one option.`
+    : `You're trending ${displayDelta(trend.actualWeeklyKg)} against an expected ${displayDelta(trend.expectedWeeklyKg)} for your ${trend.goalKey} goal. A target closer to ${trend.suggestedCalorieTarget} kcal (${trend.suggestedDelta > 0 ? '+' : ''}${trend.suggestedDelta} kcal) is one option if this trend continues.`;
+
+  container.innerHTML = `
+    <div class="card p-4 space-y-2 border-l-4" style="border-left-color: var(--accent-warn);">
+      <p class="font-display font-semibold text-sm">Trend check</p>
+      <p class="text-sm" id="weightTrendMessage" style="color: var(--text-muted);">${escapeHTML(fallbackMessage)}</p>
+      <div class="flex gap-2 pt-1">
+        <button class="btn-secondary flex-1 text-xs py-2" onclick="dismissWeightTrend()">Keep current target</button>
+        <button class="btn-primary flex-1 text-xs py-2" onclick="applyWeightTrendSuggestion(${trend.suggestedCalorieTarget})">Try ${trend.suggestedCalorieTarget} kcal</button>
+      </div>
+    </div>`;
+
+  if (GeminiClient.hasGeminiKey()) {
+    const profile = Storage.getProfile();
+    CoachNarration.narrateWeightTrend({ trend, profile }).then(result => {
+      if (weightTrendRenderGen !== thisGen) return; // view changed underneath this call — discard
+      const msgEl = document.getElementById('weightTrendMessage');
+      if (result.ok && msgEl) msgEl.textContent = result.text;
+    });
+  }
+}
+
+function dismissWeightTrend() {
+  const container = document.getElementById('weightTrendCard');
+  if (container) container.innerHTML = '';
+}
+
+// The user must explicitly tap "Try Xkcal" — this never applies on its own.
+// Re-saves through the normal nutrition profile path so the change is
+// visible and undoable the same way any manual target edit would be.
+function applyWeightTrendSuggestion(newTarget) {
+  const profile = Storage.getProfile();
+  const recalculated = Nutrition.recalculateMacrosForCalorieTarget(newTarget, profile);
+  Storage.saveNutritionProfile({ ...recalculated, lastCalculatedAt: Date.now() });
+  dismissWeightTrend();
+  renderNutrition();
+}
+
+let mealModalState = { photoDataUrl: null, estimateRange: null, source: 'manual' };
+
+function openLogMealModal() {
+  mealModalState = { photoDataUrl: null, estimateRange: null, source: 'manual' };
+  const modal = document.getElementById('modalRoot');
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
+      <div class="card w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+        <p class="font-display font-bold text-lg">Log a meal</p>
+
+        <div id="mealPhotoArea">
+          ${GeminiClient.hasGeminiKey() ? `
+            <input type="file" accept="image/*" capture="environment" id="mealPhotoInput" class="hidden" onchange="handleMealPhotoSelected(this.files[0])">
+            <div class="mb-2">
+              <label class="text-xs" style="color: var(--text-muted);">Anything the photo won't show? (optional, but helps a lot)</label>
+              <input type="text" id="mealPhotoContext" placeholder="e.g. 2 cups rice, no oil, small portion">
+            </div>
+            <button class="w-full btn-secondary py-2.5 text-sm text-left px-3 flex items-center gap-2" onclick="document.getElementById('mealPhotoInput').click()">
+              📷 Estimate from a photo
+            </button>
+          ` : `
+            <button class="w-full btn-secondary py-2.5 text-sm text-left px-3" disabled style="opacity: 0.5; cursor: not-allowed;">
+              📷 Estimate from a photo — add a Gemini API key in Settings first
+            </button>
+          `}
+        </div>
+
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Category</label>
+          <select id="mealCategory">
+            ${MEAL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Name (optional)</label>
+          <input type="text" id="mealLabel" placeholder="e.g. Chicken rice bowl">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs" style="color: var(--text-muted);">Calories</label>
+            <input type="number" inputmode="numeric" id="mealCalories" placeholder="kcal" onchange="markMealFieldEdited()">
+          </div>
+          <div>
+            <label class="text-xs" style="color: var(--text-muted);">Protein (g)</label>
+            <input type="number" inputmode="numeric" id="mealProtein" placeholder="g" onchange="markMealFieldEdited()">
+          </div>
+          <div>
+            <label class="text-xs" style="color: var(--text-muted);">Carbs (g)</label>
+            <input type="number" inputmode="numeric" id="mealCarbs" placeholder="g" onchange="markMealFieldEdited()">
+          </div>
+          <div>
+            <label class="text-xs" style="color: var(--text-muted);">Fats (g)</label>
+            <input type="number" inputmode="numeric" id="mealFats" placeholder="g" onchange="markMealFieldEdited()">
+          </div>
+        </div>
+        <p id="mealEstimateNote" class="text-xs" style="color: var(--text-muted);"></p>
+
+        <div class="flex gap-2 pt-1">
+          <button class="btn-secondary flex-1" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary flex-1" onclick="saveMealFromModal()">Log meal</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// If the user edits any numeric field by hand after an AI estimate populated
+// it, that number is now theirs — don't keep labeling it "estimated" once
+// they've corrected it (source becomes 'ai_corrected', per storage.js's schema).
+function markMealFieldEdited() {
+  if (mealModalState.source === 'ai') mealModalState.source = 'ai_corrected';
+}
+
+/**
+ * Downscales an image file client-side before it's ever stored or sent to
+ * Gemini — localStorage's total budget (~5-10MB across the whole app) would
+ * fill up fast on uncompressed photos, and Gemini doesn't need full
+ * resolution to read a plate of food. Returns a JPEG data URL capped at
+ * maxDim on its longest side.
+ */
+function compressImageForUpload(file, maxDim = 1024, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the selected file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Could not decode the selected image.'));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleMealPhotoSelected(file) {
+  if (!file) return;
+  const area = document.getElementById('mealPhotoArea');
+  const contextInput = document.getElementById('mealPhotoContext');
+  const contextNote = contextInput ? contextInput.value.trim() : '';
+  area.innerHTML = `<p class="text-xs" style="color: var(--text-muted);">Compressing and analyzing photo…</p>`;
+
+  let dataUrl;
+  try {
+    dataUrl = await compressImageForUpload(file);
+  } catch (e) {
+    area.innerHTML = `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(e.message)}</p>`;
+    return;
+  }
+
+  mealModalState.photoDataUrl = dataUrl;
+  const base64 = dataUrl.split(',')[1];
+
+  area.innerHTML = `
+    <img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">
+    <p class="text-xs" style="color: var(--text-muted);">Asking the AI to estimate…</p>`;
+
+  const result = await MealVision.estimateMealFromPhoto(base64, 'image/jpeg', contextNote);
+
+  // Modal may have been closed/reopened while this was in flight.
+  if (!document.getElementById('mealPhotoArea')) return;
 
   if (!result.ok) {
-    chatHistory.push({ role: 'assistant', text: `Couldn't reach the coach: ${result.error === 'missing_key' ? 'no API key set.' : result.error}` });
-  } else {
-    chatHistory.push({ role: 'assistant', text: result.text });
+    area.innerHTML = `
+      <img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">
+      <p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't get an estimate (${escapeHTML(result.error === 'missing_key' ? 'no API key' : result.error)}). You can still enter values manually below.</p>`;
+    return;
   }
-  renderChatView();
+
+  const est = result.estimate;
+  area.innerHTML = `
+    <img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">
+    ${est.identified
+      ? `<p class="text-xs tag-suggest">✨ Estimated ${est.caloriesLow}–${est.caloriesHigh} kcal · confidence: ${escapeHTML(est.confidence)}</p>
+         <p class="text-xs mt-0.5" style="color: var(--text-muted);">${escapeHTML(est.notes || 'This is an estimate from one photo — adjust anything below that looks off.')}</p>`
+      : `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(est.notes)}</p>`}
+  `;
+
+  if (est.identified) {
+    document.getElementById('mealLabel').value = est.label || '';
+    document.getElementById('mealCalories').value = est.calories ?? '';
+    document.getElementById('mealProtein').value = est.protein ?? '';
+    document.getElementById('mealCarbs').value = est.carbs ?? '';
+    document.getElementById('mealFats').value = est.fats ?? '';
+    mealModalState.source = 'ai';
+    mealModalState.estimateRange = { caloriesLow: est.caloriesLow, caloriesHigh: est.caloriesHigh };
+    document.getElementById('mealEstimateNote').textContent = 'Values are pre-filled from the photo — edit any of them if they look off.';
+  }
+}
+
+function saveMealFromModal() {
+  const category = document.getElementById('mealCategory').value;
+  const label = document.getElementById('mealLabel').value.trim();
+  const calories = parseFloat(document.getElementById('mealCalories').value);
+  const protein = parseFloat(document.getElementById('mealProtein').value);
+  const carbs = parseFloat(document.getElementById('mealCarbs').value);
+  const fats = parseFloat(document.getElementById('mealFats').value);
+
+  Storage.addMeal({
+    category,
+    label,
+    calories: Number.isFinite(calories) ? calories : null,
+    protein: Number.isFinite(protein) ? protein : null,
+    carbs: Number.isFinite(carbs) ? carbs : null,
+    fats: Number.isFinite(fats) ? fats : null,
+    source: mealModalState.source,
+    // Only an uncorrected AI estimate carries the range forward — once the
+    // user has touched a field (source flips to 'ai_corrected'), their
+    // number is no longer just an estimate, so drop the range per
+    // storage.js's contract ("only set for uncorrected AI estimates").
+    estimateRange: mealModalState.source === 'ai' ? mealModalState.estimateRange : null,
+    photoDataUrl: mealModalState.photoDataUrl,
+  });
+
+  closeModal();
+  renderNutrition();
 }

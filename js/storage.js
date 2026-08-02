@@ -17,6 +17,8 @@ const Keys = {
   PROFILE: STORAGE_PREFIX + 'profile',         // user profile/goals/training style
   PLANS: STORAGE_PREFIX + 'plans',             // generated workout plans
   MEALS: STORAGE_PREFIX + 'meals',             // food log entries
+  WEIGHT_LOGS: STORAGE_PREFIX + 'weight_logs', // bodyweight check-ins over time
+  NUTRITION: STORAGE_PREFIX + 'nutrition',     // BMR/TDEE inputs + calculated calorie/macro targets
   SETTINGS: STORAGE_PREFIX + 'settings',       // theme, units, misc UI prefs
   META: STORAGE_PREFIX + 'meta',               // schema version tracking
 };
@@ -164,7 +166,10 @@ function getProfile() {
     weightKg: null,
     heightCm: null,
     activityLevel: 'moderate', // sedentary | light | moderate | active | very_active
-    goal: 'maintain',          // cut | maintain | bulk
+    goal: null,                 // strength | hypertrophy | endurance | fat_loss — workout goal, set via the generator
+    nutritionGoal: 'maintain',  // cut | maintain | bulk — separate from `goal` above on purpose,
+                                 // since the two use different value sets (see nutrition.js GOAL_ADJUSTMENTS
+                                 // vs generator.js GOAL_CONFIG) and previously collided when both wrote to `goal`.
     trainingStyle: 'balanced', // hiit_low_volume | high_volume | balanced
     experienceLevel: 'beginner',
     equipment: [],
@@ -236,7 +241,7 @@ function saveSettings(settings) {
   return merged;
 }
 
-/* ---------------- Meals (stubbed for now, used later) ---------------- */
+/* ---------------- Meals (food log) ---------------- */
 
 function getMeals() {
   return readJSON(Keys.MEALS, []);
@@ -244,6 +249,125 @@ function getMeals() {
 
 function saveMeals(list) {
   return writeJSON(Keys.MEALS, list);
+}
+
+// meal = { category, date, calories, protein, carbs, fats, source: 'ai'|'manual',
+//          estimateRange: {caloriesLow, caloriesHigh} | null, photoDataUrl: string|null, label }
+function addMeal(meal) {
+  const list = getMeals();
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    id: uid('meal'),
+    date: meal.date || Date.now(),
+    category: meal.category || 'Snack', // Breakfast | Lunch | Dinner | Snack (user-editable)
+    label: meal.label || '',
+    calories: meal.calories ?? null,
+    protein: meal.protein ?? null,
+    carbs: meal.carbs ?? null,
+    fats: meal.fats ?? null,
+    source: meal.source || 'manual', // 'ai' | 'manual' | 'ai_corrected'
+    estimateRange: meal.estimateRange || null, // { caloriesLow, caloriesHigh } — only set for uncorrected AI estimates
+    photoDataUrl: meal.photoDataUrl || null,
+    notes: meal.notes || '',
+    createdAt: Date.now(),
+  };
+  list.push(record);
+  saveMeals(list);
+  return record;
+}
+
+function updateMeal(mealId, changes) {
+  const list = getMeals();
+  const idx = list.findIndex(m => m.id === mealId);
+  if (idx === -1) return null;
+  list[idx] = { ...list[idx], ...changes };
+  saveMeals(list);
+  return list[idx];
+}
+
+function deleteMeal(mealId) {
+  const list = getMeals().filter(m => m.id !== mealId);
+  return saveMeals(list);
+}
+
+// All meals logged on the same calendar day as `date` (defaults to today), local time.
+function getMealsForDate(date = new Date()) {
+  const dayStr = new Date(date).toDateString();
+  return getMeals().filter(m => new Date(m.date).toDateString() === dayStr);
+}
+
+/* ---------------- Weight log (bodyweight check-ins) ---------------- */
+
+function getWeightLogs() {
+  return readJSON(Keys.WEIGHT_LOGS, []);
+}
+
+function saveWeightLogs(list) {
+  return writeJSON(Keys.WEIGHT_LOGS, list);
+}
+
+// One check-in per calendar day: logging again on the same day updates that
+// day's entry instead of creating a second one, so a weekly-trend read isn't
+// skewed by someone weighing in twice in one morning.
+function addWeightLog({ weightKg, date = Date.now(), notes = '' }) {
+  const list = getWeightLogs();
+  const dayStr = new Date(date).toDateString();
+  const existingIdx = list.findIndex(w => new Date(w.date).toDateString() === dayStr);
+
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    id: existingIdx !== -1 ? list[existingIdx].id : uid('wt'),
+    date,
+    weightKg,
+    notes,
+    createdAt: existingIdx !== -1 ? list[existingIdx].createdAt : Date.now(),
+  };
+
+  if (existingIdx !== -1) list[existingIdx] = record;
+  else list.push(record);
+
+  saveWeightLogs(list);
+  return record;
+}
+
+function deleteWeightLog(logId) {
+  const list = getWeightLogs().filter(w => w.id !== logId);
+  return saveWeightLogs(list);
+}
+
+// Most recent N check-ins, oldest first — the shape trend analysis wants.
+function getRecentWeightLogs(n = 90) {
+  return getWeightLogs()
+    .sort((a, b) => b.date - a.date)
+    .slice(0, n)
+    .sort((a, b) => a.date - b.date);
+}
+
+/* ---------------- Nutrition targets (BMR/TDEE + macro goals) ---------------- */
+
+function getNutritionProfile() {
+  return readJSON(Keys.NUTRITION, {
+    schemaVersion: SCHEMA_VERSION,
+    // Inputs mirror the training profile's age/sex/weightKg/heightCm/activityLevel/goal
+    // so the user doesn't have to enter them twice, but are cached here as their own
+    // record because nutrition targets (calorie/macro numbers) are derived values that
+    // should stay stable until the user recalculates, not silently drift if the
+    // training profile changes for an unrelated reason.
+    calorieTarget: null,
+    proteinTarget: null,
+    carbsTarget: null,
+    fatsTarget: null,
+    bmr: null,
+    tdee: null,
+    lastCalculatedAt: null,
+  });
+}
+
+function saveNutritionProfile(nutrition) {
+  const current = getNutritionProfile();
+  const merged = { ...current, ...nutrition, schemaVersion: SCHEMA_VERSION };
+  writeJSON(Keys.NUTRITION, merged);
+  return merged;
 }
 
 window.Storage = {
@@ -254,5 +378,7 @@ window.Storage = {
   getProfile, saveProfile,
   getPlans, saveActivePlan, getActivePlan, setActivePlan, deletePlan,
   getSettings, saveSettings,
-  getMeals, saveMeals,
+  getMeals, saveMeals, addMeal, updateMeal, deleteMeal, getMealsForDate,
+  getWeightLogs, saveWeightLogs, addWeightLog, deleteWeightLog, getRecentWeightLogs,
+  getNutritionProfile, saveNutritionProfile,
 };

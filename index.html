@@ -232,6 +232,26 @@
       </div>
     </section>
 
+    <!-- ===================== NUTRITION VIEW ===================== -->
+    <section id="view-nutrition" class="view space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="font-display text-xl font-bold">Nutrition</h2>
+        <button class="text-xs" style="color: var(--text-muted);" onclick="Nav.go('nutritionProfile')">Edit targets</button>
+      </div>
+      <div id="nutritionContent" class="space-y-4"></div>
+    </section>
+
+    <!-- ===================== NUTRITION PROFILE / TARGETS SETUP VIEW ===================== -->
+    <section id="view-nutritionProfile" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('nutrition')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">Set your targets</h2>
+      <p class="text-sm" style="color: var(--text-muted);">Used to estimate a daily calorie and macro range — not a prescription. These numbers work best as a starting point you adjust based on how you actually respond over a few weeks.</p>
+      <div id="nutritionProfileForm" class="space-y-3"></div>
+      <div class="card p-3 text-xs" style="color: var(--text-muted);">
+        Large or fast weight changes, or eating below your body's needs, can affect your health. If you're unsure what's right for you, a doctor or registered dietitian can help you figure out a target that's actually appropriate for your situation.
+      </div>
+    </section>
+
     <!-- ===================== SETTINGS VIEW ===================== -->
     <section id="view-settings" class="view space-y-4">
       <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
@@ -273,7 +293,7 @@
 
   <!-- ===================== BOTTOM NAV ===================== -->
   <nav class="fixed bottom-0 left-0 right-0 z-30 elevated border-t safe-bottom" style="border-color: var(--border);">
-    <div class="max-w-lg mx-auto grid grid-cols-5 text-xs">
+    <div class="max-w-lg mx-auto grid grid-cols-6 text-xs">
       <button class="nav-item active flex flex-col items-center gap-1 py-3" data-nav="dashboard" onclick="Nav.go('dashboard')">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
         <span>Home</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
@@ -290,6 +310,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         <span>Coach</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
+      <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="nutrition" onclick="Nav.go('nutrition')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 22a7 7 0 0 0 7-7c0-3-2-5-3-8-.6 1.5-1 2-2 2.5C13 8 13 6 11 4c0 3-3 4-5 7a7 7 0 0 0 6 11z"/></svg>
+        <span>Fuel</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
+      </button>
       <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="history" onclick="Nav.go('history')">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 4-8"/></svg>
         <span>History</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
@@ -304,8 +328,10 @@
   <script src="js/themes.js"></script>
   <script src="js/exercise-seed.js"></script>
   <script src="js/progression.js"></script>
+  <script src="js/nutrition.js"></script>
   <script src="js/generator.js"></script>
   <script src="js/gemini-client.js"></script>
+  <script src="js/meal-vision.js"></script>
   <script src="js/generator-ai.js"></script>
   <script src="js/coach-narration.js"></script>
   <script src="js/chatbot.js"></script>

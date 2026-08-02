@@ -46,11 +46,18 @@ function getStyleConfig(styleKey) {
 function getTopSet(sets) {
   if (!sets || sets.length === 0) return null;
   return sets
-    .filter(s => !s.isWarmup)
+    // Exclude warmups AND fully-empty rows (no weight logged and no reps
+    // logged — e.g. a set the user added but never filled in). Without
+    // this, an empty set can win the reduce below (0/null treated as a
+    // valid comparison point) and every downstream progression suggestion
+    // silently targets 0kg or null forever after.
+    .filter(s => !s.isWarmup && (s.weight != null || s.reps != null))
     .reduce((best, s) => {
       if (!best) return s;
-      if (s.weight > best.weight) return s;
-      if (s.weight === best.weight && s.reps > best.reps) return s;
+      const sWeight = s.weight ?? 0;
+      const bestWeight = best.weight ?? 0;
+      if (sWeight > bestWeight) return s;
+      if (sWeight === bestWeight && (s.reps ?? 0) > (best.reps ?? 0)) return s;
       return best;
     }, null);
 }

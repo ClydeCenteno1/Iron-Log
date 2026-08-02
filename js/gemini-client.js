@@ -22,16 +22,22 @@ function hasGeminiKey() {
 }
 
 /**
- * Calls Gemini with a system instruction + user prompt.
- * If jsonSchema is provided, requests structured JSON output.
- * Returns { ok: true, text } or { ok: true, data } (if schema) or { ok: false, error }.
+ * Calls Gemini with a system instruction + user prompt, optionally with an
+ * inline image (for vision calls like meal photo estimation).
+ * If jsonMode is true, requests structured JSON output.
+ * Returns { ok: true, text } or { ok: true, data } (if jsonMode) or { ok: false, error }.
  */
-async function callGemini({ systemInstruction, prompt, jsonMode = false }) {
+async function callGemini({ systemInstruction, prompt, jsonMode = false, imageBase64 = null, imageMimeType = null }) {
   const key = getGeminiKey();
   if (!key) return { ok: false, error: 'missing_key' };
 
+  const userParts = [{ text: prompt }];
+  if (imageBase64) {
+    userParts.push({ inlineData: { mimeType: imageMimeType || 'image/jpeg', data: imageBase64 } });
+  }
+
   const body = {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: userParts }],
     systemInstruction: { parts: [{ text: systemInstruction }] },
     generationConfig: jsonMode ? { responseMimeType: 'application/json' } : {},
   };
