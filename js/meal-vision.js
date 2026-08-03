@@ -67,43 +67,94 @@ async function estimateMealFromPhoto(imageBase64, imageMimeType = 'image/jpeg', 
     return { ok: false, error: 'Gemini returned an unexpected estimate shape.' };
   }
 
+  return { ok: true, estimate: parseMealEstimateData(data) };
+}
+
+function parseMealEstimateData(data) {
   const hasRange = typeof data.caloriesLow === 'number' && typeof data.caloriesHigh === 'number';
 
   if (!hasRange) {
-    // Model couldn't confidently estimate — surface that as a soft failure
-    // with whatever explanation it gave, rather than a blank/zero meal.
     return {
-      ok: true,
-      estimate: {
-        label: data.label || '',
-        identified: false,
-        notes: data.notes || "Couldn't confidently identify this from the photo.",
-      },
+      label: data.label || '',
+      identified: false,
+      notes: data.notes || "Couldn't confidently identify this.",
     };
   }
 
-  // Midpoint of the range is what gets stored as the "calories" number for
-  // dashboard totals (storage.js's addMeal already treats calories as a
-  // point value for summing) — estimateRange is kept alongside it so the UI
-  // can always show "~X (range Y-Z)" rather than a bare number implying
-  // precision the estimate doesn't have.
   const caloriesMid = Math.round((data.caloriesLow + data.caloriesHigh) / 2);
 
   return {
-    ok: true,
-    estimate: {
-      identified: true,
-      label: data.label || 'Estimated meal',
-      calories: caloriesMid,
-      caloriesLow: Math.round(data.caloriesLow),
-      caloriesHigh: Math.round(data.caloriesHigh),
-      protein: typeof data.protein === 'number' ? Math.round(data.protein) : null,
-      carbs: typeof data.carbs === 'number' ? Math.round(data.carbs) : null,
-      fats: typeof data.fats === 'number' ? Math.round(data.fats) : null,
-      confidence: ['low', 'medium', 'high'].includes(data.confidence) ? data.confidence : 'low',
-      notes: data.notes || '',
-    },
+    identified: true,
+    label: data.label || 'Estimated meal',
+    calories: caloriesMid,
+    caloriesLow: Math.round(data.caloriesLow),
+    caloriesHigh: Math.round(data.caloriesHigh),
+    protein: typeof data.protein === 'number' ? Math.round(data.protein) : null,
+    carbs: typeof data.carbs === 'number' ? Math.round(data.carbs) : null,
+    fats: typeof data.fats === 'number' ? Math.round(data.fats) : null,
+    confidence: ['low', 'medium', 'high'].includes(data.confidence) ? data.confidence : 'low',
+    notes: data.notes || '',
   };
 }
 
-window.MealVision = { estimateMealFromPhoto, MEAL_VISION_SYSTEM_INSTRUCTION };
+/**
+ * Re-runs an estimate after the user corrects or adds detail on top of a
+ * PRIOR photo estimate (e.g. "actually it's 3 eggs not 2", "I added a
+ * tablespoon of olive oil", "no rice, I skipped it"). The original photo is
+ * re-attached when available so the model has both the visual and the
+ * correction — correction text always takes precedence over the photo where
+ * they conflict, same principle as buildMealVisionPrompt's contextNote.
+ * imageBase64 may be null (e.g. if the modal no longer has it in memory);
+ * in that case this is a text-only refinement against the prior estimate.
+ */
+async function refineMealEstimate({ previousEstimate, correctionText, imageBase64 = null, imageMimeType = 'image/jpeg' }) {
+  if (!GeminiClient.hasGeminiKey()) {
+    return { ok: false, error: 'missing_key' };
+  }
+  if (!correctionText || !correctionText.trim()) {
+    return { ok: false, error: 'No correction provided.' };
+  }
+
+  const prompt = `You previously estimated this meal as:
+Label: ${previousEstimate.label || 'unknown'}
+Calories: ${previousEstimate.caloriesLow ?? '?'}-${previousEstimate.caloriesHigh ?? '?'} kcal
+Protein: ${previousEstimate.protein ?? '?'}g, Carbs: ${previousEstimate.carbs ?? '?'}g, Fats: ${previousEstimate.fats ?? '?'}g
+
+The person is now correcting or adding detail on top of that estimate. Treat their statement as ground truth over your prior guess or the photo where they conflict — they know their actual meal better than either can show:
+"${correctionText.trim()}"
+
+${imageBase64 ? 'The original photo is attached again for reference.' : 'The original photo is not available for this correction — rely on the previous estimate above plus the correction text.'}
+
+Re-estimate the FULL meal (not just the correction) and return the complete updated numbers.
+
+Return JSON in exactly this shape:
+{
+  "label": "short description of the food, e.g. 'Grilled chicken with rice and vegetables'",
+  "caloriesLow": number or null,
+  "caloriesHigh": number or null,
+  "protein": number or null,
+  "carbs": number or null,
+  "fats": number or null,
+  "confidence": "low" or "medium" or "high",
+  "notes": "1 sentence on anything still uncertain"
+}`;
+
+  const result = await GeminiClient.callGemini({
+    systemInstruction: MEAL_VISION_SYSTEM_INSTRUCTION,
+    prompt,
+    jsonMode: true,
+    imageBase64,
+    imageMimeType,
+  });
+
+  if (!result.ok) return result;
+
+  const data = result.data;
+  if (!data || typeof data !== 'object') {
+    return { ok: false, error: 'Gemini returned an unexpected estimate shape.' };
+  }
+
+  return { ok: true, estimate: parseMealEstimateData(data) };
+}
+
+window.MealVision = { estimateMealFromPhoto, refineMealEstimate, MEAL_VISION_SYSTEM_INSTRUCTION };

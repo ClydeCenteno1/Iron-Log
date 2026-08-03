@@ -36,13 +36,21 @@ Recent sessions:
 ${sessionSummaries || 'No sessions logged yet.'}`;
 }
 
+// Only the most recent turns are sent back to Gemini on each message — an
+// unbounded history would make the prompt (and therefore latency) grow with
+// every message in a long chat session. 10 turns (~5 exchanges) is enough
+// for the model to track the immediate thread; older context isn't usually
+// needed turn-to-turn the way it is for e.g. long-form editing.
+const MAX_CHAT_HISTORY_TURNS = 10;
+
 async function askChatbot(userMessage, conversationHistory = []) {
   if (!GeminiClient.hasGeminiKey()) {
     return { ok: false, error: 'missing_key' };
   }
 
   const contextBlock = getChatContextBlock();
-  const historyText = conversationHistory.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
+  const recentHistory = conversationHistory.slice(-MAX_CHAT_HISTORY_TURNS);
+  const historyText = recentHistory.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
 
   const prompt = `${contextBlock}
 

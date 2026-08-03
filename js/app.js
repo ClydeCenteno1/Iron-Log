@@ -67,6 +67,11 @@ const Nav = {
       btn.classList.toggle('active', btn.dataset.nav === viewName);
     });
 
+    // #chatInputBar lives outside .view (see index.html comment) so it
+    // isn't shown/hidden by the .active class swap above — toggle it here.
+    const chatInputBar = document.getElementById('chatInputBar');
+    if (chatInputBar) chatInputBar.style.display = viewName === 'chat' ? 'block' : 'none';
+
     if (viewName === 'dashboard') renderDashboard();
     if (viewName === 'generator') renderGeneratorStart();
     if (viewName === 'manualBuilder') {
@@ -151,7 +156,8 @@ function renderDashboard() {
     const hasSession = sessions.some(s => new Date(s.date).toDateString() === dayStr);
     if (hasSession) daysLogged++;
     const dot = document.createElement('div');
-    dot.className = 'flex-1 h-8 rounded-md flex items-center justify-center text-[10px] font-mono';
+    dot.className = 'flex-1 h-8 rounded-md flex items-center justify-center text-[10px] font-mono stagger-in';
+    dot.style.animationDelay = `${(6 - i) * 30}ms`;
     dot.style.background = hasSession ? 'var(--accent-logged)' : 'var(--bg-elevated)';
     dot.style.color = hasSession ? '#0E0F12' : 'var(--text-muted)';
     dot.style.border = hasSession ? 'none' : '1px solid var(--border)';
@@ -251,8 +257,8 @@ function maybeOfferRepeatProgramOverload(day, continueCallback) {
 
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
-      <div class="card w-full max-w-sm p-5 space-y-3">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3">
         <p class="font-display font-bold">You've done this session before</p>
         <p class="text-sm" style="color: var(--text-muted);">You've logged this exact set of exercises ${matchingPriorSessions.length} time${matchingPriorSessions.length > 1 ? 's' : ''} before. Want AI to review your weights/reps from last time and suggest how to progressively overload today?</p>
         <div class="flex gap-2 pt-1">
@@ -282,8 +288,8 @@ async function acceptRepeatProgramOverload() {
   // Show a lightweight loading modal while we fetch suggestions per exercise.
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
-      <div class="card w-full max-w-sm p-5 space-y-3">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3">
         <p class="font-display font-bold">Reviewing your progress…</p>
         <p class="text-sm" style="color: var(--text-muted);">Checking each exercise against your history.</p>
       </div>
@@ -319,8 +325,8 @@ function showRepeatOverloadResults(results, continueCallback) {
   const modal = document.getElementById('modalRoot');
   const anyAI = results.some(r => r.ai);
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
-      <div class="card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
         <p class="font-display font-bold text-lg">Progressive overload plan</p>
         ${!anyAI ? `<p class="text-xs" style="color: var(--text-muted);">Showing rules-based targets only — add a Gemini API key in Settings for AI-reviewed suggestions too.</p>` : ''}
         <div class="space-y-2">
@@ -490,7 +496,7 @@ function renderGeneratorStep() {
   if (step === 1) {
     body = `
       <p class="text-sm mb-3" style="color: var(--text-muted);">What's your main goal?</p>
-      <div class="grid grid-cols-1 gap-2">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         ${optionButton('goal', 'strength', 'Strength', 'Heavier weight, lower reps')}
         ${optionButton('goal', 'hypertrophy', 'Hypertrophy', 'Muscle growth, moderate reps')}
         ${optionButton('goal', 'endurance', 'Endurance', 'Higher reps, less rest')}
@@ -499,7 +505,7 @@ function renderGeneratorStep() {
   } else if (step === 2) {
     body = `
       <p class="text-sm mb-3" style="color: var(--text-muted);">Preferred training split?</p>
-      <div class="grid grid-cols-1 gap-2">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         ${optionButton('splitKey', 'full_body', 'Full Body', 'Every muscle group each session')}
         ${optionButton('splitKey', 'upper_lower', 'Upper / Lower', 'Alternating upper and lower days')}
         ${optionButton('splitKey', 'push_pull_legs', 'Push / Pull / Legs', 'Classic 3-way split')}
@@ -507,7 +513,7 @@ function renderGeneratorStep() {
   } else if (step === 3) {
     body = `
       <p class="text-sm mb-3" style="color: var(--text-muted);">Training style?</p>
-      <div class="grid grid-cols-1 gap-2">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         ${optionButton('styleKey', 'hiit_low_volume', 'High Intensity / Low Volume', '3-6 reps, longer rest, weight-focused')}
         ${optionButton('styleKey', 'high_volume', 'High Volume / Low Intensity', '10-15 reps, shorter rest, rep-focused')}
         ${optionButton('styleKey', 'balanced', 'Balanced', '6-10 reps, moderate rest')}
@@ -516,7 +522,7 @@ function renderGeneratorStep() {
     const equipOptions = ['Bodyweight', 'Weighted Calisthenics', 'Dumbbells', 'Barbell', 'Machine', 'Cable Machine', 'Bands'];
     body = `
       <p class="text-sm mb-3" style="color: var(--text-muted);">What equipment do you have access to? (select all that apply)</p>
-      <div class="grid grid-cols-2 gap-2 mb-4">
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-4">
         ${equipOptions.map(eq => `
           <button class="equip-toggle btn-secondary py-2.5 text-sm ${generatorState.equipment.includes(eq) ? 'equip-active' : ''}"
                   style="${generatorState.equipment.includes(eq) ? 'border-color: var(--accent-logged); color: var(--accent-logged);' : ''}"
@@ -766,8 +772,8 @@ function openExercisePickerForManualDay(dayIdx) {
   const exercises = Storage.getExercises();
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-end" style="background: rgba(0,0,0,0.6);" onclick="if(event.target===this) closeModal()">
-      <div class="card w-full max-h-[75vh] rounded-b-none flex flex-col" style="border-bottom:none;">
+    <div class="fixed inset-0 z-40 flex items-end modal-backdrop" style="background: rgba(0,0,0,0.6);" onclick="if(event.target===this) closeModal()">
+      <div class="modal-sheet card w-full max-h-[75vh] rounded-b-none flex flex-col" style="border-bottom:none;">
         <div class="p-4 border-b" style="border-color: var(--border);">
           <p class="font-display font-semibold mb-2">Add exercise to Day ${manualBuilderState.days[dayIdx].dayNumber}</p>
           <input type="text" id="manualPickerSearch" placeholder="Search..." oninput="filterManualExercisePicker(${dayIdx}, this.value)">
@@ -845,8 +851,10 @@ function saveManualProgram() {
 
   if (manualBuilderEditingPlanId) {
     Storage.updatePlan(manualBuilderEditingPlanId, plan);
+    showToast('Program updated');
   } else {
     Storage.saveActivePlan(plan);
+    showToast('Program saved');
   }
   manualBuilderEditingPlanId = null;
   Nav.go('dashboard');
@@ -1044,8 +1052,8 @@ function openExercisePickerForSession() {
   const exercises = Storage.getExercises();
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-end" style="background: rgba(0,0,0,0.6);" onclick="if(event.target===this) closeModal()">
-      <div class="card w-full max-h-[75vh] rounded-b-none flex flex-col" style="border-bottom:none;">
+    <div class="fixed inset-0 z-40 flex items-end modal-backdrop" style="background: rgba(0,0,0,0.6);" onclick="if(event.target===this) closeModal()">
+      <div class="modal-sheet card w-full max-h-[75vh] rounded-b-none flex flex-col" style="border-bottom:none;">
         <div class="p-4 border-b" style="border-color: var(--border);">
           <p class="font-display font-semibold mb-2">Add exercise</p>
           <input type="text" id="pickerSearch" placeholder="Search..." oninput="filterExercisePicker(this.value)">
@@ -1087,8 +1095,49 @@ function pickExerciseForSession(exerciseId) {
   renderLogSession();
 }
 
+// Plays the reverse of the modal's entry animation before clearing it —
+// an instant innerHTML wipe reads as the modal vanishing/glitching rather
+// than closing. Falls back to an immediate clear if for some reason the
+// backdrop element isn't there (defensive, shouldn't normally happen).
+// Lightweight, non-blocking confirmation for actions that previously
+// happened silently (meal logged, session finished, plan saved) — the user
+// had no feedback that the tap actually did anything besides the view
+// changing underneath them. Auto-dismisses; never stacks more than 2 at
+// once so a burst of quick actions doesn't flood the screen.
+const TOAST_KINDS = {
+  success: 'var(--accent-success)',
+  info: 'var(--accent-logged)',
+  warn: 'var(--accent-warn)',
+};
+function showToast(message, kind = 'success') {
+  const root = document.getElementById('toastRoot');
+  if (!root) return;
+
+  while (root.children.length >= 2) root.removeChild(root.firstChild);
+
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  const dotColor = TOAST_KINDS[kind] || TOAST_KINDS.success;
+  toast.innerHTML = `<span class="toast-dot" style="background:${dotColor};"></span><span>${escapeHTML(message)}</span>`;
+  root.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('leaving');
+    setTimeout(() => toast.remove(), 200);
+  }, 2200);
+}
+
 function closeModal() {
-  document.getElementById('modalRoot').innerHTML = '';
+  const root = document.getElementById('modalRoot');
+  const backdrop = root.querySelector('.modal-backdrop');
+  const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!backdrop || reducedMotion) {
+    root.innerHTML = '';
+    return;
+  }
+  backdrop.classList.add('closing');
+  // Matches the CSS backdropOut/sheetOut animation duration (160ms).
+  setTimeout(() => { root.innerHTML = ''; }, 160);
 }
 
 function confirmLeaveSession() {
@@ -1145,8 +1194,8 @@ function showPostWorkoutSummary(rows, aiNote) {
   };
 
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
-      <div class="card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
         <p class="font-display font-bold text-lg">Session complete</p>
         ${aiNote ? `<p class="text-sm tag-logged">${escapeHTML(aiNote)}</p>` : (GeminiClient.hasGeminiKey() ? `<p class="text-xs" style="color: var(--text-muted);">Getting your coach's take...</p>` : '')}
         <div class="space-y-2">
@@ -1240,8 +1289,8 @@ function renderLibrary() {
 function openAddExerciseModal() {
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);" onclick="if(event.target===this) closeModal()">
-      <div class="card w-full max-w-sm p-5 space-y-3">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);" onclick="if(event.target===this) closeModal()">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3">
         <p class="font-display font-bold">Add custom exercise</p>
         <input type="text" id="newExName" placeholder="Exercise name">
         <select id="newExGroup">
@@ -1335,8 +1384,8 @@ function saveGeminiKeyFromSettings() {
 function promptForGeminiKey(onSaved) {
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
-      <div class="card w-full max-w-sm p-5 space-y-3">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3">
         <p class="font-display font-bold">Add your Gemini API key</p>
         <p class="text-xs" style="color: var(--text-muted);">This app uses Gemini to generate workouts and coaching feedback. Your key is stored only in this browser and sent directly to Google's API.</p>
         <input type="text" id="keyPromptInput" placeholder="Paste your Gemini API key">
@@ -1373,6 +1422,7 @@ function renderChatView() {
       <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
         <div class="card p-3 max-w-[85%] text-sm" style="${m.role === 'user' ? 'background: var(--accent-logged); color: #0E0F12; border: none;' : ''}">
           ${escapeHTML(m.text)}
+          ${m.failed ? `<button class="btn-secondary text-xs mt-2 px-2 py-1" onclick="retryLastChatMessage()">Retry</button>` : ''}
         </div>
       </div>`).join('');
   }
@@ -1410,7 +1460,7 @@ async function sendChatMessage() {
     const idx = chatHistory.indexOf(placeholder);
     const replacement = result.ok
       ? { role: 'assistant', text: result.text }
-      : { role: 'assistant', text: `Couldn't reach the coach: ${result.error === 'missing_key' ? 'no API key set.' : result.error}` };
+      : { role: 'assistant', text: `Couldn't reach the coach: ${result.error === 'missing_key' ? 'no API key set.' : result.error}`, failed: true, retryText: text };
     if (idx !== -1) chatHistory[idx] = replacement;
     else chatHistory.push(replacement); // placeholder was somehow removed — still show the answer
   } finally {
@@ -1421,13 +1471,36 @@ async function sendChatMessage() {
   }
 }
 
+// Retries the most recent failed exchange (timeout, quota, network error)
+// without making the user retype their message. Removes the failed
+// assistant reply AND its paired user message from history first, then
+// resends through the normal path — otherwise a retry would leave two
+// copies of the same user message in history and in the context sent to
+// Gemini on the next real turn.
+function retryLastChatMessage() {
+  if (chatSendInFlight) return;
+  const lastIdx = chatHistory.length - 1;
+  const last = chatHistory[lastIdx];
+  if (!last || !last.failed || !last.retryText) return;
+
+  chatHistory.splice(lastIdx, 1); // drop the failed assistant reply
+  if (chatHistory[lastIdx - 1]?.role === 'user') {
+    chatHistory.splice(lastIdx - 1, 1); // drop its paired user message too
+  }
+
+  const input = document.getElementById('chatInput');
+  input.value = last.retryText;
+  sendChatMessage();
+}
+
 /* ============================================================
    NUTRITION
    Profile form feeds Nutrition.calculateTargets() (nutrition.js);
    dashboard shows today's logged meals against those targets.
-   Meal logging here is manual-entry only — photo/AI estimation
-   (meal-vision.js) is a separate, not-yet-built piece; the button
-   below says so rather than pretending to offer it.
+   Meal logging supports both manual entry and photo/AI estimation
+   via meal-vision.js — the "Estimate from a photo" button below
+   compresses the image, sends it to Gemini, then pre-fills the
+   fields, which the user can still edit before saving.
    ============================================================ */
 
 const MEAL_CATEGORIES = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
@@ -1718,14 +1791,14 @@ function applyWeightTrendSuggestion(newTarget) {
   renderNutrition();
 }
 
-let mealModalState = { photoDataUrl: null, estimateRange: null, source: 'manual' };
+let mealModalState = { photoDataUrl: null, photoBase64: null, estimateRange: null, source: 'manual', lastEstimate: null };
 
 function openLogMealModal() {
-  mealModalState = { photoDataUrl: null, estimateRange: null, source: 'manual' };
+  mealModalState = { photoDataUrl: null, photoBase64: null, estimateRange: null, source: 'manual', lastEstimate: null };
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
-    <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.7);">
-      <div class="card w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
         <p class="font-display font-bold text-lg">Log a meal</p>
 
         <div id="mealPhotoArea">
@@ -1735,12 +1808,16 @@ function openLogMealModal() {
               <label class="text-xs" style="color: var(--text-muted);">Anything the photo won't show? (optional, but helps a lot)</label>
               <input type="text" id="mealPhotoContext" placeholder="e.g. 2 cups rice, no oil, small portion">
             </div>
-            <button class="w-full btn-secondary py-2.5 text-sm text-left px-3 flex items-center gap-2" onclick="document.getElementById('mealPhotoInput').click()">
+            <button class="w-full btn-secondary py-2.5 text-sm text-left px-3 flex items-center gap-2 mb-2" onclick="document.getElementById('mealPhotoInput').click()">
               📷 Estimate from a photo
             </button>
+            <div class="flex items-center gap-2 mb-2">
+              <input type="text" id="mealTextDescription" placeholder="e.g. 2 eggs and a cup of rice" class="flex-1" onkeydown="if(event.key==='Enter'){event.preventDefault();handleMealTextSubmitted();}">
+              <button class="btn-secondary py-2.5 px-3 text-sm whitespace-nowrap" onclick="handleMealTextSubmitted()">✨ Estimate</button>
+            </div>
           ` : `
             <button class="w-full btn-secondary py-2.5 text-sm text-left px-3" disabled style="opacity: 0.5; cursor: not-allowed;">
-              📷 Estimate from a photo — add a Gemini API key in Settings first
+              📷 Estimate from a photo or text — add a Gemini API key in Settings first
             </button>
           `}
         </div>
@@ -1774,6 +1851,7 @@ function openLogMealModal() {
           </div>
         </div>
         <p id="mealEstimateNote" class="text-xs" style="color: var(--text-muted);"></p>
+        <div id="mealRefineArea"></div>
 
         <div class="flex gap-2 pt-1">
           <button class="btn-secondary flex-1" onclick="closeModal()">Cancel</button>
@@ -1788,6 +1866,8 @@ function openLogMealModal() {
 // they've corrected it (source becomes 'ai_corrected', per storage.js's schema).
 function markMealFieldEdited() {
   if (mealModalState.source === 'ai') mealModalState.source = 'ai_corrected';
+  mealModalState.lastEstimate = null;
+  renderMealRefineArea();
 }
 
 /**
@@ -1797,7 +1877,7 @@ function markMealFieldEdited() {
  * resolution to read a plate of food. Returns a JPEG data URL capped at
  * maxDim on its longest side.
  */
-function compressImageForUpload(file, maxDim = 1024, quality = 0.82) {
+function compressImageForUpload(file, maxDim = 768, quality = 0.78) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Could not read the selected file.'));
@@ -1828,10 +1908,14 @@ async function handleMealPhotoSelected(file) {
   const area = document.getElementById('mealPhotoArea');
   const contextInput = document.getElementById('mealPhotoContext');
   const contextNote = contextInput ? contextInput.value.trim() : '';
-  area.innerHTML = `<p class="text-xs" style="color: var(--text-muted);">Compressing and analyzing photo…</p>`;
+  area.innerHTML = `<p class="text-xs" style="color: var(--text-muted);">Compressing photo…</p>`;
 
   let dataUrl;
   try {
+    // This step is local (canvas resize) and near-instant — the network
+    // call below is what actually takes time, so these get separate
+    // status messages rather than one combined "compressing and analyzing"
+    // string that makes a fast local step look like part of the slow part.
     dataUrl = await compressImageForUpload(file);
   } catch (e) {
     area.innerHTML = `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(e.message)}</p>`;
@@ -1840,10 +1924,18 @@ async function handleMealPhotoSelected(file) {
 
   mealModalState.photoDataUrl = dataUrl;
   const base64 = dataUrl.split(',')[1];
+  mealModalState.photoBase64 = base64;
 
+  // Show the photo right away so the user has visual confirmation the
+  // upload worked, with an explicit "this can take a few seconds" note —
+  // waiting on nothing but a spinner is what makes network latency feel
+  // like the app is stuck.
   area.innerHTML = `
     <img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">
-    <p class="text-xs" style="color: var(--text-muted);">Asking the AI to estimate…</p>`;
+    <p class="text-xs flex items-center gap-1.5" style="color: var(--text-muted);">
+      <span class="spinner" style="width:10px;height:10px;"></span>
+      Asking the AI to estimate… usually takes a few seconds
+    </p>`;
 
   const result = await MealVision.estimateMealFromPhoto(base64, 'image/jpeg', contextNote);
 
@@ -1857,25 +1949,142 @@ async function handleMealPhotoSelected(file) {
     return;
   }
 
-  const est = result.estimate;
+  applyMealEstimateToForm(result.estimate, {
+    areaHTML: dataUrl
+      ? `<img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`
+      : '',
+    hasPhoto: true,
+    sourceLabel: 'from the photo',
+  });
+}
+
+/**
+ * Text-description path: "2 eggs and a cup of rice" -> estimate, same
+ * pre-fill + editable-fields behavior as the photo path. Lives alongside
+ * the photo button rather than replacing it — some meals are easier to
+ * describe than photograph (leftovers already plated weird, eating out
+ * without pulling out a phone, etc).
+ */
+async function handleMealTextSubmitted() {
+  const input = document.getElementById('mealTextDescription');
+  const description = input ? input.value.trim() : '';
+  if (!description) return;
+
+  const area = document.getElementById('mealPhotoArea');
+  const priorPhotoHTML = mealModalState.photoDataUrl
+    ? `<img src="${mealModalState.photoDataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`
+    : '';
+
   area.innerHTML = `
-    <img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">
+    ${priorPhotoHTML}
+    <p class="text-xs flex items-center gap-1.5" style="color: var(--text-muted);">
+      <span class="spinner" style="width:10px;height:10px;"></span>
+      Asking the AI to estimate "${escapeHTML(description)}"…
+    </p>`;
+
+  const result = await MealText.estimateMealFromText(description);
+
+  if (!document.getElementById('mealPhotoArea')) return;
+
+  if (!result.ok) {
+    area.innerHTML = `
+      ${priorPhotoHTML}
+      <p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't get an estimate (${escapeHTML(result.error === 'missing_key' ? 'no API key' : result.error)}). You can still enter values manually below.</p>`;
+    return;
+  }
+
+  applyMealEstimateToForm(result.estimate, {
+    areaHTML: priorPhotoHTML,
+    hasPhoto: !!mealModalState.photoDataUrl,
+    sourceLabel: 'from your description',
+  });
+}
+
+/**
+ * Shared by both the photo and text estimate paths (and by the refine
+ * follow-up below) so pre-fill behavior, source-tagging, and the "correct
+ * this" affordance stay identical regardless of how the estimate was
+ * produced.
+ */
+function applyMealEstimateToForm(est, { areaHTML, hasPhoto, sourceLabel }) {
+  const area = document.getElementById('mealPhotoArea');
+  area.innerHTML = `
+    ${areaHTML}
     ${est.identified
       ? `<p class="text-xs tag-suggest">✨ Estimated ${est.caloriesLow}–${est.caloriesHigh} kcal · confidence: ${escapeHTML(est.confidence)}</p>
-         <p class="text-xs mt-0.5" style="color: var(--text-muted);">${escapeHTML(est.notes || 'This is an estimate from one photo — adjust anything below that looks off.')}</p>`
+         <p class="text-xs mt-0.5" style="color: var(--text-muted);">${escapeHTML(est.notes || `This is an estimate ${sourceLabel} — adjust anything below that looks off.`)}</p>`
       : `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(est.notes)}</p>`}
   `;
 
-  if (est.identified) {
-    document.getElementById('mealLabel').value = est.label || '';
-    document.getElementById('mealCalories').value = est.calories ?? '';
-    document.getElementById('mealProtein').value = est.protein ?? '';
-    document.getElementById('mealCarbs').value = est.carbs ?? '';
-    document.getElementById('mealFats').value = est.fats ?? '';
-    mealModalState.source = 'ai';
-    mealModalState.estimateRange = { caloriesLow: est.caloriesLow, caloriesHigh: est.caloriesHigh };
-    document.getElementById('mealEstimateNote').textContent = 'Values are pre-filled from the photo — edit any of them if they look off.';
+  if (!est.identified) {
+    mealModalState.lastEstimate = null;
+    renderMealRefineArea();
+    return;
   }
+
+  document.getElementById('mealLabel').value = est.label || '';
+  document.getElementById('mealCalories').value = est.calories ?? '';
+  document.getElementById('mealProtein').value = est.protein ?? '';
+  document.getElementById('mealCarbs').value = est.carbs ?? '';
+  document.getElementById('mealFats').value = est.fats ?? '';
+  mealModalState.source = 'ai';
+  mealModalState.estimateRange = { caloriesLow: est.caloriesLow, caloriesHigh: est.caloriesHigh };
+  mealModalState.lastEstimate = est;
+  document.getElementById('mealEstimateNote').textContent = `Values are pre-filled ${sourceLabel} — edit any of them if they look off.`;
+  renderMealRefineArea();
+}
+
+// Renders the "correct or add detail" follow-up box under any AI estimate
+// (photo or text). This re-runs the estimate rather than just letting the
+// user overwrite numbers by hand — useful when the correction changes
+// several numbers at once (e.g. "actually there's 2 tbsp peanut butter too"
+// shifts calories/fat/carbs together) and the user would rather describe
+// the change than recompute it themselves.
+function renderMealRefineArea() {
+  const container = document.getElementById('mealRefineArea');
+  if (!container) return;
+  if (!mealModalState.lastEstimate) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = `
+    <div class="flex items-center gap-2 mt-1">
+      <input type="text" id="mealRefineInput" placeholder="Correct or add detail, e.g. 3 eggs not 2" class="flex-1" onkeydown="if(event.key==='Enter'){event.preventDefault();handleMealRefineSubmitted();}">
+      <button class="btn-secondary py-2 px-3 text-xs whitespace-nowrap" onclick="handleMealRefineSubmitted()">Update</button>
+    </div>`;
+}
+
+async function handleMealRefineSubmitted() {
+  const input = document.getElementById('mealRefineInput');
+  const correctionText = input ? input.value.trim() : '';
+  if (!correctionText || !mealModalState.lastEstimate) return;
+
+  const container = document.getElementById('mealRefineArea');
+  container.innerHTML = `
+    <p class="text-xs flex items-center gap-1.5 mt-1" style="color: var(--text-muted);">
+      <span class="spinner" style="width:10px;height:10px;"></span>
+      Updating the estimate…
+    </p>`;
+
+  const result = await MealVision.refineMealEstimate({
+    previousEstimate: mealModalState.lastEstimate,
+    correctionText,
+    imageBase64: mealModalState.photoBase64,
+    imageMimeType: 'image/jpeg',
+  });
+
+  if (!document.getElementById('mealRefineArea')) return;
+
+  if (!result.ok) {
+    container.innerHTML = `<p class="text-xs mt-1" style="color: var(--accent-warn, #E8B23A);">Couldn't update the estimate (${escapeHTML(result.error === 'missing_key' ? 'no API key' : result.error)}). You can still edit the fields above by hand.</p>`;
+    return;
+  }
+
+  const areaHTML = mealModalState.photoDataUrl
+    ? `<img src="${mealModalState.photoDataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`
+    : '';
+
+  applyMealEstimateToForm(result.estimate, { areaHTML, hasPhoto: !!mealModalState.photoDataUrl, sourceLabel: 'after your correction' });
 }
 
 function saveMealFromModal() {
@@ -1904,4 +2113,5 @@ function saveMealFromModal() {
 
   closeModal();
   renderNutrition();
+  showToast(label ? `Logged: ${label}` : 'Meal logged');
 }
