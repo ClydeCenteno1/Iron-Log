@@ -363,11 +363,32 @@
       </div>
 
       <div class="card p-4 space-y-2">
+        <p class="font-display font-semibold text-sm">Primary AI provider</p>
+        <p class="text-xs" style="color: var(--text-muted);">Which one is tried first. If it fails or its key isn't set, the app automatically falls back to the other (when configured) and lets you know.</p>
+        <select id="primaryProviderSelect" onchange="onPrimaryProviderChange(this.value)">
+          <option value="gemini">Gemini</option>
+          <option value="openrouter">OpenRouter</option>
+        </select>
+      </div>
+
+      <div class="card p-4 space-y-2">
         <p class="font-display font-semibold text-sm">Gemini API key</p>
-        <p class="text-xs" style="color: var(--text-muted);">Powers AI workout generation, coaching notes, and the chatbot. Stored only in this browser.</p>
+        <p class="text-xs" style="color: var(--text-muted);">Powers AI workout generation, coaching notes, meal photo/text estimation, and the chatbot. Stored only in this browser.</p>
         <input type="text" id="geminiKeyInput" placeholder="Paste your Gemini API key">
         <button class="btn-primary w-full py-2 text-sm" onclick="saveGeminiKeyFromSettings()">Save key</button>
         <p id="geminiKeyStatus" class="text-xs"></p>
+        <label class="text-xs" style="color: var(--text-muted);">Model</label>
+        <select id="geminiModelSelect" onchange="onGeminiModelChange(this.value)"></select>
+      </div>
+
+      <div class="card p-4 space-y-2">
+        <p class="font-display font-semibold text-sm">OpenRouter API key</p>
+        <p class="text-xs" style="color: var(--text-muted);">Second AI provider. Whichever isn't set as primary above acts as the automatic fallback — you'll see a notice when a call actually uses it. Vision-capable, so meal photos work either way. Stored only in this browser.</p>
+        <input type="text" id="openrouterKeyInput" placeholder="Paste your OpenRouter API key">
+        <button class="btn-secondary w-full py-2 text-sm" onclick="saveOpenRouterKeyFromSettings()">Save key</button>
+        <p id="openrouterKeyStatus" class="text-xs"></p>
+        <label class="text-xs" style="color: var(--text-muted);">Model</label>
+        <select id="openrouterModelSelect" onchange="onOpenRouterModelChange(this.value)"></select>
       </div>
 
       <div class="card p-4 text-xs" style="color: var(--text-muted);">
@@ -433,6 +454,8 @@
   <script src="js/nutrition.js"></script>
   <script src="js/generator.js"></script>
   <script src="js/gemini-client.js"></script>
+  <script src="js/openrouter-client.js"></script>
+  <script src="js/ai-provider.js"></script>
   <script src="js/meal-vision.js"></script>
   <script src="js/meal-text.js"></script>
   <script src="js/generator-ai.js"></script>

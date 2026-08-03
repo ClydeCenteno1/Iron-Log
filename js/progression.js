@@ -252,7 +252,7 @@ function roundToStep(weight) {
  * replaces suggestNextTarget's output.
  */
 async function suggestNextTargetAI({ exerciseId, exerciseName, styleKey, profile }) {
-  if (!window.GeminiClient || !GeminiClient.hasGeminiKey()) {
+  if (!window.AIProvider || !AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
 
@@ -296,7 +296,7 @@ Return JSON in exactly this shape:
   "reasoning": "1-2 sentence explanation referencing the trend, not just the last session"
 }`;
 
-  const result = await GeminiClient.callGemini({ systemInstruction, prompt, jsonMode: true });
+  const result = await AIProvider.callAI({ systemInstruction, prompt, jsonMode: true });
   if (!result.ok) return result;
 
   const data = result.data;

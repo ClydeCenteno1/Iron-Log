@@ -1,14 +1,15 @@
 /* ============================================================
    AI COACHING NARRATION
    The rules engine (progression.js) still computes every number.
-   This layer only asks Gemini to phrase that decision like a coach
-   talking to the lifter — tone shaped by training style/goal. If
-   Gemini is unavailable, callers fall back to the rules engine's
-   own plain-English message, so the app never breaks without a key.
+   This layer only asks the AI provider to phrase that decision like
+   a coach talking to the lifter — tone shaped by training style/goal.
+   If no AI provider is available, callers fall back to the rules
+   engine's own plain-English message, so the app never breaks
+   without a key.
    ============================================================ */
 
 async function narrateCoachingFeedback({ exerciseName, suggestion, profile }) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
 
@@ -23,13 +24,13 @@ Training goal: ${profile.goal}, experience: ${profile.experienceLevel}.
 
 Write the 1-2 sentence coaching note explaining this target. Do not restate raw numbers mechanically — talk like a coach would.`;
 
-  const result = await GeminiClient.callGemini({ systemInstruction, prompt });
+  const result = await AIProvider.callAI({ systemInstruction, prompt });
   if (!result.ok) return result;
   return { ok: true, text: result.text.trim() };
 }
 
 async function narratePostWorkoutSummary({ rows, profile }) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
 
@@ -42,7 +43,7 @@ ${rows.map(r => `- ${r.name}: ${r.classification}${r.topSet ? ` (${r.topSet.weig
 Goal: ${profile.goal}, training style: ${profile.trainingStyle}.
 Write a short overall summary (2-3 sentences).`;
 
-  const result = await GeminiClient.callGemini({ systemInstruction, prompt });
+  const result = await AIProvider.callAI({ systemInstruction, prompt });
   if (!result.ok) return result;
   return { ok: true, text: result.text.trim() };
 }
@@ -58,7 +59,7 @@ Write a short overall summary (2-3 sentences).`;
  * always frame the number as optional context the person can ignore.
  */
 async function narrateWeightTrend({ trend, profile }) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
   if (trend.status !== 'ok' || trend.pace === 'on_track') {
@@ -83,7 +84,7 @@ Suggested calorie target: ${trend.suggestedCalorieTarget} (${trend.suggestedDelt
 
 Write a short (2-3 sentence) note explaining this observation and the optional suggested adjustment.`;
 
-  const result = await GeminiClient.callGemini({ systemInstruction, prompt });
+  const result = await AIProvider.callAI({ systemInstruction, prompt });
   if (!result.ok) return result;
   return { ok: true, text: result.text.trim() };
 }

@@ -56,12 +56,12 @@ Return JSON in exactly this shape:
 }
 
 async function generatePlanAI(questionnaire) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
 
   const { systemInstruction, prompt, availableExercises } = buildGeneratorPrompt(questionnaire);
-  const result = await GeminiClient.callGemini({ systemInstruction, prompt, jsonMode: true });
+  const result = await AIProvider.callAI({ systemInstruction, prompt, jsonMode: true });
 
   if (!result.ok) return result;
 

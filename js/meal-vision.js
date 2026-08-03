@@ -45,14 +45,14 @@ Return JSON in exactly this shape:
  * the single biggest lever for a more accurate estimate. Always optional.
  */
 async function estimateMealFromPhoto(imageBase64, imageMimeType = 'image/jpeg', contextNote = '') {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
   if (!imageBase64) {
     return { ok: false, error: 'No image provided.' };
   }
 
-  const result = await GeminiClient.callGemini({
+  const result = await AIProvider.callAI({
     systemInstruction: MEAL_VISION_SYSTEM_INSTRUCTION,
     prompt: buildMealVisionPrompt(contextNote),
     jsonMode: true,
@@ -108,7 +108,7 @@ function parseMealEstimateData(data) {
  * in that case this is a text-only refinement against the prior estimate.
  */
 async function refineMealEstimate({ previousEstimate, correctionText, imageBase64 = null, imageMimeType = 'image/jpeg' }) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
   if (!correctionText || !correctionText.trim()) {
@@ -139,7 +139,7 @@ Return JSON in exactly this shape:
   "notes": "1 sentence on anything still uncertain"
 }`;
 
-  const result = await GeminiClient.callGemini({
+  const result = await AIProvider.callAI({
     systemInstruction: MEAL_VISION_SYSTEM_INSTRUCTION,
     prompt,
     jsonMode: true,

@@ -307,7 +307,7 @@ async function acceptRepeatProgramOverload() {
     const baseline = Progression.suggestNextTarget({ exerciseId: ex.exerciseId, styleKey });
 
     let aiResult = null;
-    if (GeminiClient.hasGeminiKey()) {
+    if (AIProvider.hasAnyKey()) {
       aiResult = await Progression.suggestNextTargetAI({
         exerciseId: ex.exerciseId,
         exerciseName: name,
@@ -594,7 +594,7 @@ async function finishGeneratorQuestionnaire() {
     experienceLevel: generatorState.experienceLevel,
   });
 
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     promptForGeminiKey(() => finishGeneratorQuestionnaire());
     return;
   }
@@ -948,7 +948,7 @@ function renderLogSession() {
       </div>`;
   }).join('');
 
-  if (GeminiClient.hasGeminiKey()) {
+  if (AIProvider.hasAnyKey()) {
     const profile = Storage.getProfile();
     session.entries.forEach(async (entry, entryIdx) => {
       const ex = exercises.find(x => x.id === entry.exerciseId);
@@ -968,7 +968,7 @@ function updateSetWarmup(entryIdx, setIdx, checked) {
 }
 
 async function requestAIOverload(entryIdx, exerciseId) {
-  if (!GeminiClient.hasGeminiKey()) { promptForGeminiKey(() => requestAIOverload(entryIdx, exerciseId)); return; }
+  if (!AIProvider.hasAnyKey()) { promptForGeminiKey(() => requestAIOverload(entryIdx, exerciseId)); return; }
 
   const el = document.getElementById(`aiOverload-${entryIdx}`);
   if (!el) return;
@@ -1177,7 +1177,7 @@ async function finishSession() {
 
   showPostWorkoutSummary(summaryRows, null);
 
-  if (GeminiClient.hasGeminiKey()) {
+  if (AIProvider.hasAnyKey()) {
     const profile = Storage.getProfile();
     const narration = await CoachNarration.narratePostWorkoutSummary({ rows: summaryRows, profile });
     if (narration.ok) showPostWorkoutSummary(summaryRows, narration.text);
@@ -1197,7 +1197,7 @@ function showPostWorkoutSummary(rows, aiNote) {
     <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
       <div class="modal-sheet card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
         <p class="font-display font-bold text-lg">Session complete</p>
-        ${aiNote ? `<p class="text-sm tag-logged">${escapeHTML(aiNote)}</p>` : (GeminiClient.hasGeminiKey() ? `<p class="text-xs" style="color: var(--text-muted);">Getting your coach's take...</p>` : '')}
+        ${aiNote ? `<p class="text-sm tag-logged">${escapeHTML(aiNote)}</p>` : (AIProvider.hasAnyKey() ? `<p class="text-xs" style="color: var(--text-muted);">Getting your coach's take...</p>` : '')}
         <div class="space-y-2">
           ${rows.map(r => {
             const info = labelFor[r.classification] || labelFor.first_time;
@@ -1355,10 +1355,46 @@ function renderSettingsForm() {
     <option value="${key}" ${profile.trainingStyle === key ? 'selected' : ''}>${s.label}</option>
   `).join('');
   document.getElementById('settingsUnitsSelect').value = settings.units;
+  const primaryProviderSelect = document.getElementById('primaryProviderSelect');
+  if (primaryProviderSelect) primaryProviderSelect.value = AIProvider.getPrimaryProvider();
+  const primaryId = AIProvider.getPrimaryProvider();
   const status = document.getElementById('geminiKeyStatus');
   if (status) {
-    status.textContent = GeminiClient.hasGeminiKey() ? 'Key is set.' : 'No key set yet.';
-    status.style.color = GeminiClient.hasGeminiKey() ? 'var(--accent-success)' : 'var(--text-muted)';
+    const isPrimary = primaryId === 'gemini';
+    if (GeminiClient.hasGeminiKey()) {
+      status.textContent = isPrimary ? 'Key is set (primary).' : 'Key is set (fallback).';
+      status.style.color = 'var(--accent-success)';
+    } else {
+      status.textContent = isPrimary ? 'No key set — AI features won\'t work.' : 'No key set — no fallback if OpenRouter fails.';
+      status.style.color = 'var(--text-muted)';
+    }
+  }
+  const orStatus = document.getElementById('openrouterKeyStatus');
+  if (orStatus) {
+    const isPrimary = primaryId === 'openrouter';
+    if (OpenRouterClient.hasOpenRouterKey()) {
+      orStatus.textContent = isPrimary ? 'Key is set (primary).' : 'Key is set (fallback).';
+      orStatus.style.color = 'var(--accent-success)';
+    } else {
+      orStatus.textContent = isPrimary ? 'No key set — AI features won\'t work.' : 'No key set — no fallback if Gemini fails.';
+      orStatus.style.color = 'var(--text-muted)';
+    }
+  }
+
+  const geminiModelSelect = document.getElementById('geminiModelSelect');
+  if (geminiModelSelect) {
+    const currentGeminiModel = GeminiClient.getGeminiModel();
+    geminiModelSelect.innerHTML = GeminiClient.GEMINI_MODEL_OPTIONS.map(m => `
+      <option value="${m.id}" ${m.id === currentGeminiModel ? 'selected' : ''}>${escapeHTML(m.label)}</option>
+    `).join('');
+  }
+
+  const openrouterModelSelect = document.getElementById('openrouterModelSelect');
+  if (openrouterModelSelect) {
+    const currentORModel = OpenRouterClient.getOpenRouterModel();
+    openrouterModelSelect.innerHTML = OpenRouterClient.OPENROUTER_MODEL_OPTIONS.map(m => `
+      <option value="${m.id}" ${m.id === currentORModel ? 'selected' : ''}>${escapeHTML(m.label)}</option>
+    `).join('');
   }
 }
 
@@ -1370,6 +1406,19 @@ function onUnitsChange(value) {
   Storage.saveSettings({ units: value });
 }
 
+function onPrimaryProviderChange(value) {
+  AIProvider.setPrimaryProvider(value);
+  renderSettingsForm();
+}
+
+function onGeminiModelChange(value) {
+  GeminiClient.setGeminiModel(value);
+}
+
+function onOpenRouterModelChange(value) {
+  OpenRouterClient.setOpenRouterModel(value);
+}
+
 function saveGeminiKeyFromSettings() {
   const val = document.getElementById('geminiKeyInput').value.trim();
   if (!val) return;
@@ -1377,6 +1426,15 @@ function saveGeminiKeyFromSettings() {
   document.getElementById('geminiKeyInput').value = '';
   document.getElementById('geminiKeyStatus').textContent = 'Key saved.';
   document.getElementById('geminiKeyStatus').style.color = 'var(--accent-success)';
+}
+
+function saveOpenRouterKeyFromSettings() {
+  const val = document.getElementById('openrouterKeyInput').value.trim();
+  if (!val) return;
+  OpenRouterClient.setOpenRouterKey(val);
+  document.getElementById('openrouterKeyInput').value = '';
+  document.getElementById('openrouterKeyStatus').textContent = 'Key saved.';
+  document.getElementById('openrouterKeyStatus').style.color = 'var(--accent-success)';
 }
 
 /* ---------------- Gemini key prompt (blocking gate for AI features) ---------------- */
@@ -1436,7 +1494,7 @@ async function sendChatMessage() {
   const text = input.value.trim();
   if (!text) return;
 
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     promptForGeminiKey(() => sendChatMessage());
     return;
   }
@@ -1765,7 +1823,7 @@ function renderWeightTrendCard() {
       </div>
     </div>`;
 
-  if (GeminiClient.hasGeminiKey()) {
+  if (AIProvider.hasAnyKey()) {
     const profile = Storage.getProfile();
     CoachNarration.narrateWeightTrend({ trend, profile }).then(result => {
       if (weightTrendRenderGen !== thisGen) return; // view changed underneath this call — discard
@@ -1802,7 +1860,7 @@ function openLogMealModal() {
         <p class="font-display font-bold text-lg">Log a meal</p>
 
         <div id="mealPhotoArea">
-          ${GeminiClient.hasGeminiKey() ? `
+          ${AIProvider.hasAnyKey() ? `
             <input type="file" accept="image/*" capture="environment" id="mealPhotoInput" class="hidden" onchange="handleMealPhotoSelected(this.files[0])">
             <div class="mb-2">
               <label class="text-xs" style="color: var(--text-muted);">Anything the photo won't show? (optional, but helps a lot)</label>

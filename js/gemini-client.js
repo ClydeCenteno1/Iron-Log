@@ -7,16 +7,33 @@
    ============================================================ */
 
 const GEMINI_KEY_STORAGE = 'ft_gemini_key';
-// gemini-3.6-flash is GA and current as of mid-2026. It defaults to a
-// "medium" thinking level, which spends extra latency reasoning before
-// answering — unnecessary for this app's calls (template-shaped JSON
-// extraction: meal estimates, workout plans, coaching notes), so every
-// call below explicitly requests "minimal" thinking via generationConfig
-// to keep responses fast. Fallback model kept in case Google retires/
-// renames the primary ID again (this has happened multiple times to prior
-// Flash generations) — callGemini retries once against it on a 404.
-const GEMINI_MODEL = 'gemini-3.6-flash';
-const GEMINI_MODEL_FALLBACK = 'gemini-3.5-flash-lite'; // same 3.x generation, so thinkingConfig below stays valid if this fires
+const GEMINI_MODEL_STORAGE = 'ft_gemini_model';
+// gemini-3.6-flash is GA and current as of mid-2026 and is the default —
+// fast, cheap, plenty for this app's template-shaped calls. Offered
+// alongside a couple of alternatives in Settings for people who want to
+// trade speed for more reasoning quality, or vice versa. Every entry here
+// must support both vision (meal photos) and JSON mode (every other call),
+// since callGemini doesn't know at call time which a given model choice
+// will be asked to do.
+const GEMINI_MODEL_OPTIONS = [
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash (default — fast)' },
+  { id: 'gemini-3.6-pro', label: 'Gemini 3.6 Pro (slower, stronger reasoning)' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (fastest, lighter)' },
+];
+const GEMINI_MODEL_DEFAULT = 'gemini-3.6-flash';
+// Kept distinct from the user-selectable options above: if Google retires/
+// renames a model ID (has happened before to prior Flash generations),
+// callGemini retries once against this regardless of what the user picked,
+// since a 404 means the picked ID itself is gone, not a quality tradeoff.
+const GEMINI_MODEL_FALLBACK = 'gemini-3.5-flash-lite';
+
+function getGeminiModel() {
+  return localStorage.getItem(GEMINI_MODEL_STORAGE) || GEMINI_MODEL_DEFAULT;
+}
+
+function setGeminiModel(modelId) {
+  localStorage.setItem(GEMINI_MODEL_STORAGE, modelId);
+}
 
 function getGeminiKey() {
   return localStorage.getItem(GEMINI_KEY_STORAGE) || '';
@@ -66,7 +83,7 @@ async function callGemini({ systemInstruction, prompt, jsonMode = false, imageBa
   // stuck on a spinner with no way out.
   const attempt = (modelId) => callGeminiOnce(modelId, key, body);
 
-  let result = await attempt(GEMINI_MODEL);
+  let result = await attempt(getGeminiModel());
 
   // If the primary model ID itself is invalid/retired (Google returns 404
   // for an unrecognized model), retry once against the fallback rather than
@@ -122,4 +139,4 @@ async function callGeminiOnce(modelId, key, body) {
   }
 }
 
-window.GeminiClient = { getGeminiKey, setGeminiKey, hasGeminiKey, callGemini };
+window.GeminiClient = { getGeminiKey, setGeminiKey, hasGeminiKey, getGeminiModel, setGeminiModel, GEMINI_MODEL_OPTIONS, callGemini };

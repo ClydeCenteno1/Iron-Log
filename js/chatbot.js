@@ -44,7 +44,7 @@ ${sessionSummaries || 'No sessions logged yet.'}`;
 const MAX_CHAT_HISTORY_TURNS = 10;
 
 async function askChatbot(userMessage, conversationHistory = []) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
 
@@ -58,7 +58,7 @@ ${historyText ? historyText + '\n' : ''}User: ${userMessage}
 
 Respond as the assistant.`;
 
-  const result = await GeminiClient.callGemini({ systemInstruction: CHATBOT_SYSTEM_INSTRUCTION, prompt });
+  const result = await AIProvider.callAI({ systemInstruction: CHATBOT_SYSTEM_INSTRUCTION, prompt });
   if (!result.ok) return result;
   return { ok: true, text: result.text.trim() };
 }

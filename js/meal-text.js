@@ -65,14 +65,14 @@ function parseMealTextData(data) {
  * description: free text like "2 eggs and a cup of rice". Required.
  */
 async function estimateMealFromText(description) {
-  if (!GeminiClient.hasGeminiKey()) {
+  if (!AIProvider.hasAnyKey()) {
     return { ok: false, error: 'missing_key' };
   }
   if (!description || !description.trim()) {
     return { ok: false, error: 'No description provided.' };
   }
 
-  const result = await GeminiClient.callGemini({
+  const result = await AIProvider.callAI({
     systemInstruction: MEAL_TEXT_SYSTEM_INSTRUCTION,
     prompt: buildMealTextPrompt(description),
     jsonMode: true,
