@@ -870,6 +870,20 @@ function saveManualProgram() {
 // after the user has added/removed/reordered exercises (which shifts what
 // entryIdx N actually points at) can't land on the wrong card — or a stale
 // one — after a re-render.
+// Cache coach narration per exercise+suggestion+profile signature so
+// re-renders (typing a weight, ticking a box, adding a set) don't re-fire
+// an AI call for every exercise on every keystroke. Only a genuinely new
+// coaching decision (different exercise, the progression suggestion
+// changing, or the person's goal/experience level changing) results in a
+// fresh call. Cleared whenever a session ends, since a new workout may
+// start under a different training style and old notes shouldn't linger
+// indefinitely in memory.
+const coachNoteCache = {};
+
+function clearCoachNoteCache() {
+  for (const key in coachNoteCache) delete coachNoteCache[key];
+}
+
 let logSessionRenderGen = 0;
 
 function renderLogSession() {
@@ -953,10 +967,29 @@ function renderLogSession() {
     session.entries.forEach(async (entry, entryIdx) => {
       const ex = exercises.find(x => x.id === entry.exerciseId);
       const suggestion = Progression.suggestNextTarget({ exerciseId: entry.exerciseId, styleKey: session.trainingStyle });
+
+      // Key on exercise + the fields that actually drive the note's content,
+      // not on entryIdx alone — a re-render triggered by typing a rep count
+      // shouldn't count as a new coaching decision. Includes goal/experience
+      // since narrateCoachingFeedback's prompt is shaped by both, and a
+      // mid-session profile change (reachable from Settings) should produce
+      // a fresh note rather than serving a stale cached one.
+      const cacheKey = `${entry.exerciseId}:${suggestion.status}:${suggestion.classification}:${suggestion.suggestedWeight}:${suggestion.suggestedReps}:${suggestion.suggestedSets}:${profile.goal}:${profile.experienceLevel}`;
+      const noteEl = document.getElementById(`coachNote-${entryIdx}`);
+
+      const cached = coachNoteCache[cacheKey];
+      if (cached) {
+        if (noteEl) noteEl.textContent = cached;
+        return;
+      }
+
       const narration = await CoachNarration.narrateCoachingFeedback({ exerciseName: ex ? ex.name : 'exercise', suggestion, profile });
       if (logSessionRenderGen !== thisGen) return; // view changed underneath this call — discard
-      const noteEl = document.getElementById(`coachNote-${entryIdx}`);
-      if (narration.ok && noteEl) noteEl.textContent = narration.text;
+      if (!narration.ok) return;
+
+      coachNoteCache[cacheKey] = narration.text;
+      const liveEl = document.getElementById(`coachNote-${entryIdx}`);
+      if (liveEl) liveEl.textContent = narration.text;
     });
   }
 }
@@ -1159,6 +1192,7 @@ async function finishSession() {
   );
   if (session.entries.length === 0) {
     Storage.clearActiveSession();
+    clearCoachNoteCache();
     Nav.go('dashboard');
     return;
   }
@@ -1174,6 +1208,7 @@ async function finishSession() {
 
   Storage.addSession(session);
   Storage.clearActiveSession();
+  clearCoachNoteCache();
 
   showPostWorkoutSummary(summaryRows, null);
 
@@ -1480,7 +1515,10 @@ function renderChatView() {
       <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
         <div class="card p-3 max-w-[85%] text-sm" style="${m.role === 'user' ? 'background: var(--accent-logged); color: #0E0F12; border: none;' : ''}">
           ${escapeHTML(m.text)}
-          ${m.failed ? `<button class="btn-secondary text-xs mt-2 px-2 py-1" onclick="retryLastChatMessage()">Retry</button>` : ''}
+          ${m.failed ? `<div class="flex gap-2 mt-2">
+            <button class="btn-secondary text-xs px-2 py-1" onclick="retryLastChatMessage()">Retry</button>
+            <button class="btn-secondary text-xs px-2 py-1" onclick="Nav.go('settings')">Switch provider/model</button>
+          </div>` : ''}
         </div>
       </div>`).join('');
   }

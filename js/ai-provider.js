@@ -44,12 +44,43 @@ function callProvider(providerId, params) {
   return providerId === 'gemini' ? GeminiClient.callGemini(params) : OpenRouterClient.callOpenRouter(params);
 }
 
+// Safety net against a class of bug rather than any specific call site: if
+// something upstream (a render loop, a stale event handler, etc.) fires the
+// *exact same* systemInstruction+prompt+image while an identical call is
+// already in flight, share that one in-flight promise instead of hitting
+// the provider twice. This does not replace caching at the call site (which
+// still avoids the network round-trip entirely) — it's a last-resort guard
+// so a future re-render bug burns through quota more slowly, not a
+// substitute for fixing the loop itself.
+const inFlightCalls = new Map();
+
+function requestSignature(params) {
+  return JSON.stringify({
+    s: params.systemInstruction,
+    p: params.prompt,
+    j: params.jsonMode || false,
+    i: params.imageBase64 ? params.imageBase64.length : 0,
+  });
+}
+
 /**
  * Same call contract as GeminiClient.callGemini / OpenRouterClient.callOpenRouter:
  * { ok: true, text } | { ok: true, data } | { ok: false, error }.
  * Callers don't need to know which provider actually answered.
  */
 async function callAI(params) {
+  const signature = requestSignature(params);
+  const existing = inFlightCalls.get(signature);
+  if (existing) return existing;
+
+  const promise = callAIUncached(params).finally(() => {
+    inFlightCalls.delete(signature);
+  });
+  inFlightCalls.set(signature, promise);
+  return promise;
+}
+
+async function callAIUncached(params) {
   const primaryId = getPrimaryProvider();
   const secondaryId = AI_PROVIDERS[primaryId].other;
 
