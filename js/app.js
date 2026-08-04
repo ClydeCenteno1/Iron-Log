@@ -14,16 +14,59 @@
    persists in localStorage and re-fires on every future render. */
 function escapeHTML(str) {
   return String(str ?? '')
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
 // Kept as an alias — used historically for attribute values specifically,
 // but the same escaping is safe (and necessary) in text content too.
 function escapeAttr(str) {
   return escapeHTML(str);
+}
+
+/* ---------------- Chat markdown rendering ----------------
+   The chatbot's system prompt asks for concise prose, but nothing stops
+   the model from reaching for markdown (bold, bullets) the way it would
+   in any other chat surface — and it does, often. escapeHTML() alone left
+   that markdown as literal asterisks with no line breaks (HTML collapses
+   raw \n), so a bulleted answer rendered as one run-on paragraph full of
+   ** and * characters instead of an actual list.
+
+   This escapes first (XSS-safe — same as every other AI-text call site),
+   then converts a deliberately small, safe subset of markdown on top of
+   the now-inert escaped text: **bold**, "- "/"* " bullet lines -> <ul>,
+   blank-line-separated paragraphs, and single newlines -> <br>. No links,
+   no raw HTML passthrough, no nested/complex markdown — a chat bubble
+   doesn't need more than this, and less surface area here means less to
+   get wrong. Only ever use this for ASSISTANT messages; user messages
+   are shown as literal escaped text, which is correct (we're not trying
+   to interpret the user's own input as formatting).
+*/
+function renderChatMarkdown(text) {
+  const escaped = escapeHTML(text);
+
+  // Bold: **text** -> <strong>text</strong>. Runs after escaping, so the
+  // asterisks here are literal characters in the escaped string, not markup.
+  const withBold = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // Split into blocks on blank lines, then render each block as either a
+  // bullet list (every line starts with "- " or "* ") or a paragraph with
+  // single newlines turned into <br>.
+  const blocks = withBold.split(/\n\s*\n/);
+  const html = blocks.map(block => {
+    const lines = block.split('\n').filter(l => l.trim() !== '');
+    if (lines.length === 0) return '';
+    const isList = lines.every(l => /^(-|\*)\s+/.test(l.trim()));
+    if (isList) {
+      const items = lines.map(l => `<li>${l.trim().replace(/^(-|\*)\s+/, '')}</li>`).join('');
+      return `<ul class="pl-4 my-1" style="list-style: disc;">${items}</ul>`;
+    }
+    return `<p class="my-1">${lines.join('<br>')}</p>`;
+  }).join('');
+
+  return html || escaped;
 }
 
 /* ---------------- Init ---------------- */
@@ -1514,7 +1557,7 @@ function renderChatView() {
     el.innerHTML = chatHistory.map(m => `
       <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
         <div class="card p-3 max-w-[85%] text-sm" style="${m.role === 'user' ? 'background: var(--accent-logged); color: #0E0F12; border: none;' : ''}">
-          ${escapeHTML(m.text)}
+          ${m.role === 'user' ? escapeHTML(m.text) : renderChatMarkdown(m.text)}
           ${m.failed ? `<div class="flex gap-2 mt-2">
             <button class="btn-secondary text-xs px-2 py-1" onclick="retryLastChatMessage()">Retry</button>
             <button class="btn-secondary text-xs px-2 py-1" onclick="Nav.go('settings')">Switch provider/model</button>
