@@ -14,10 +14,10 @@
    persists in localStorage and re-fires on every future render. */
 function escapeHTML(str) {
   return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
     .replace(/'/g, '&#39;');
 }
 // Kept as an alias — used historically for attribute values specifically,
@@ -1646,11 +1646,440 @@ function renderNutritionProfileForm() {
             <option value="${key}" ${(profile.nutritionGoal || 'maintain') === key ? 'selected' : ''}>${g.label}</option>
           `).join('')}
         </select>
+        <p class="text-xs mt-1" style="color: var(--text-muted);">Set automatically when you use "Set a goal" below — changeable here directly too.</p>
+      </div>
+      <div class="card p-3 space-y-2" style="background: var(--bg-elevated);">
+        ${profile.goalWeightKg ? `
+          <p class="text-sm font-medium">${escapeHTML(Nutrition.GOAL_INTENTS[profile.goalIntent]?.label || 'Goal weight set')}</p>
+          <p class="text-xs" style="color: var(--text-muted);">Target: ${profile.goalWeightKg}kg</p>
+          <button class="btn-secondary w-full py-2 text-sm" onclick="openGoalWizard()">Change goal</button>
+        ` : `
+          <p class="text-sm" style="color: var(--text-muted);">No goal weight set yet.</p>
+          <button class="btn-secondary w-full py-2 text-sm" onclick="openGoalWizard()">Set a goal</button>
+        `}
       </div>
       <button class="btn-primary w-full py-2 text-sm" onclick="saveNutritionProfileForm()">Calculate targets</button>
       <p id="nutritionFormStatus" class="text-xs"></p>
+      <div id="goalGuidanceCard"></div>
     </div>
   `;
+  renderGoalGuidance();
+}
+
+/* ---------------- Goal-setting wizard ----------------
+   A short, one-question-at-a-time flow rather than a flat form: asking
+   "what's your goal" in plain language (abs, lose fat, bulk...) before
+   asking for a target weight gives the number context, and lets the
+   guidance card afterward speak to what the user actually said they
+   want rather than a generic cut/bulk label. */
+
+let goalWizardState = { step: 'intent', intent: null, estimatedCurrentBFPercent: null, bfMethod: null };
+
+function openGoalWizard() {
+  const profile = Storage.getProfile();
+  goalWizardState = {
+    step: 'intent',
+    intent: profile.goalIntent || null,
+    estimatedCurrentBFPercent: profile.estimatedBFPercent || null,
+    bfMethod: null,
+  };
+  renderGoalWizardStep();
+}
+
+function computeGoalSuggestion() {
+  const profile = Storage.getProfile();
+  return Nutrition.suggestGoalWeight({
+    intentKey: goalWizardState.intent,
+    weightKg: profile.weightKg,
+    heightCm: profile.heightCm,
+    sex: profile.sex,
+    estimatedCurrentBFPercent: goalWizardState.estimatedCurrentBFPercent,
+  });
+}
+
+function renderGoalWizardStep() {
+  const modal = document.getElementById('modalRoot');
+  const profile = Storage.getProfile();
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  const displayWeight = (kg) => settings.units === 'lb' ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
+
+  let bodyHTML;
+
+  if (goalWizardState.step === 'intent') {
+    bodyHTML = `
+      <p class="font-display font-bold text-lg">What's your main goal?</p>
+      <p class="text-sm" style="color: var(--text-muted);">We'll use this plus your stats to suggest a goal weight.</p>
+      <div class="space-y-2">
+        ${Object.entries(Nutrition.GOAL_INTENTS).map(([key, intent]) => `
+          <button class="w-full text-left btn-secondary py-3 px-4 text-sm" onclick="selectGoalIntent('${key}')">${escapeHTML(intent.label)}</button>
+        `).join('')}
+      </div>
+      <button class="w-full text-sm py-2" style="color: var(--text-muted);" onclick="closeModal()">Cancel</button>`;
+
+  } else if (goalWizardState.step === 'bodyfat') {
+    // Only reached for get_abs — a current body-fat estimate is needed to
+    // translate a target BF% into a goal weight (see nutrition.js). Offer
+    // the tape-measurement method (more accurate) with manual entry as a
+    // fallback for anyone who'd rather not measure.
+    bodyHTML = `
+      <p class="font-display font-bold text-lg">What's your current body fat?</p>
+      <p class="text-sm" style="color: var(--text-muted);">This helps translate a "visible abs" target into a weight number specific to you.</p>
+      <div class="space-y-2">
+        <button class="w-full text-left btn-secondary py-3 px-4 text-sm" onclick="goalWizardState.step='bodyfat_measure'; renderGoalWizardStep();">
+          Measure it (tape method) — most accurate
+        </button>
+        ${AIProvider.hasAnyKey() ? `
+          <button class="w-full text-left btn-secondary py-3 px-4 text-sm" onclick="goalWizardState.step='bodyfat_photo'; renderGoalWizardStep();">
+            📷 Estimate from a photo
+          </button>
+        ` : ''}
+        <button class="w-full text-left btn-secondary py-3 px-4 text-sm" onclick="goalWizardState.step='bodyfat_manual'; renderGoalWizardStep();">
+          I'll enter a rough guess
+        </button>
+      </div>
+      <button class="btn-secondary w-full py-2 text-sm" onclick="goalWizardState.step='intent'; renderGoalWizardStep();">Back</button>`;
+
+  } else if (goalWizardState.step === 'bodyfat_photo') {
+    bodyHTML = `
+      <p class="font-display font-bold text-lg">Estimate from a photo</p>
+      <p class="text-sm" style="color: var(--text-muted);">
+        A rough AI visual estimate — less accurate than the tape method, but quick. Best with a clear, well-lit, full-torso photo in fitted clothing. This photo is only used for this one estimate and is never saved.
+      </p>
+      <div id="bfPhotoArea">
+        <input type="file" accept="image/*" capture="environment" id="bfPhotoInput" class="hidden" onchange="handleBodyFatPhotoSelected(this.files[0])">
+        <button class="w-full btn-secondary py-2.5 text-sm text-left px-3 flex items-center gap-2" onclick="document.getElementById('bfPhotoInput').click()">
+          📷 Choose or take a photo
+        </button>
+      </div>
+      <button class="btn-secondary w-full py-2 text-sm" onclick="goalWizardState.step='bodyfat'; renderGoalWizardStep();">Back</button>`;
+
+  } else if (goalWizardState.step === 'bodyfat_measure') {
+    const profile = Storage.getProfile();
+    const sex = profile.sex || 'male';
+    bodyHTML = `
+      <p class="font-display font-bold text-lg">Quick tape measurements</p>
+      <p class="text-sm" style="color: var(--text-muted);">
+        U.S. Navy method — a validated tape-measurement formula, typically within a few percent of a DEXA scan. Measure snugly, not compressed, in cm.
+      </p>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Neck (cm)</label>
+          <input type="number" inputmode="decimal" id="measNeck" placeholder="e.g. 38">
+        </div>
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Waist (cm)</label>
+          <input type="number" inputmode="decimal" id="measWaist" placeholder="e.g. 85">
+          <p class="text-xs mt-1" style="color: var(--text-muted);">At the navel</p>
+        </div>
+      </div>
+      ${sex === 'female' ? `
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Hips (cm)</label>
+          <input type="number" inputmode="decimal" id="measHip" placeholder="e.g. 100">
+          <p class="text-xs mt-1" style="color: var(--text-muted);">Widest point</p>
+        </div>
+      ` : ''}
+      <p class="text-xs" style="color: var(--text-muted);">Uses your height (${profile.heightCm ? profile.heightCm + 'cm' : 'add it on the setup page first'}) from your profile.</p>
+      <p id="measureError" class="text-xs" style="color: var(--accent-warn);"></p>
+      <div class="flex gap-2">
+        <button class="btn-secondary flex-1 py-2 text-sm" onclick="goalWizardState.step='bodyfat'; renderGoalWizardStep();">Back</button>
+        <button class="btn-primary flex-1 py-2 text-sm" onclick="submitMeasuredBodyFat()">Calculate</button>
+      </div>`;
+
+  } else if (goalWizardState.step === 'bodyfat_manual') {
+    bodyHTML = `
+      <p class="font-display font-bold text-lg">Rough estimate: current body fat?</p>
+      <p class="text-sm" style="color: var(--text-muted);">A ballpark is fine — pick your closest guess.</p>
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Estimated body fat %</label>
+        <input type="number" inputmode="decimal" id="wizardBodyFat" placeholder="e.g. 22" min="3" max="60">
+      </div>
+      <div class="flex gap-2">
+        <button class="btn-secondary flex-1 py-2 text-sm" onclick="goalWizardState.step='bodyfat'; renderGoalWizardStep();">Back</button>
+        <button class="btn-primary flex-1 py-2 text-sm" onclick="submitBodyFatEstimate()">Continue</button>
+      </div>`;
+
+  } else {
+    // step === 'weight'
+    const intent = Nutrition.GOAL_INTENTS[goalWizardState.intent];
+    const suggestion = computeGoalSuggestion();
+    const prefillKg = profile.goalWeightKg || suggestion?.suggestedWeightKg || profile.weightKg;
+    const bfPercent = goalWizardState.estimatedCurrentBFPercent;
+    const bfCategory = bfPercent != null ? Nutrition.categorizeBodyFat(bfPercent, profile.sex) : null;
+
+    bodyHTML = `
+      <p class="font-display font-bold text-lg">${escapeHTML(intent.label)}</p>
+      <p class="text-sm" style="color: var(--text-muted);">That usually means ${escapeHTML(intent.blurb)}.</p>
+
+      ${bfPercent != null ? `
+        <div class="card p-3" style="background: var(--bg-elevated);">
+          <p class="text-xs" style="color: var(--text-muted);">Estimated current body fat${goalWizardState.bfMethod === 'navy' ? ' (tape method)' : goalWizardState.bfMethod === 'photo' ? ' (photo estimate)' : ' (your estimate)'}</p>
+          <p class="font-display text-lg font-bold">${bfPercent}%${bfCategory ? ` <span class="text-xs font-normal" style="color: var(--text-muted);">— ${escapeHTML(bfCategory)}</span>` : ''}</p>
+        </div>
+      ` : ''}
+
+      ${suggestion ? `
+        <div class="card p-3 space-y-1" style="background: var(--bg-elevated);">
+          <p class="text-xs" style="color: var(--text-muted);">Suggested goal weight</p>
+          <p class="font-display text-xl font-bold">${displayWeight(suggestion.suggestedWeightKg)}${unitLabel}</p>
+          <p class="text-xs" style="color: var(--text-muted);">${escapeHTML(suggestion.explanation)} This is a population-level estimate, not a personal prescription — adjust it to whatever feels right for you below.</p>
+        </div>
+      ` : `
+        <p class="text-xs" style="color: var(--text-muted);">Add your weight and height on this page first to get a suggested number — for now, enter one manually below.</p>
+      `}
+
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Goal weight (${unitLabel})</label>
+        <input type="number" inputmode="decimal" id="wizardGoalWeight" placeholder="${profile.weightKg ? `e.g. ${displayWeight(profile.weightKg)}` : 'e.g. 68'}" value="${prefillKg ? displayWeight(prefillKg) : ''}">
+        <p class="text-xs mt-1" style="color: var(--text-muted);">Pre-filled with the suggestion above — change it to anything you'd rather use.</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn-secondary flex-1 py-2 text-sm" onclick="goalWizardState.step='${goalWizardState.intent === 'get_abs' ? 'bodyfat' : 'intent'}'; renderGoalWizardStep();">Back</button>
+        <button class="btn-primary flex-1 py-2 text-sm" onclick="saveGoalWizard()">Save goal</button>
+      </div>`;
+  }
+
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+        ${bodyHTML}
+      </div>
+    </div>`;
+}
+
+function selectGoalIntent(key) {
+  goalWizardState.intent = key;
+  goalWizardState.step = key === 'get_abs' ? 'bodyfat' : 'weight';
+  renderGoalWizardStep();
+}
+
+function submitBodyFatEstimate() {
+  const input = document.getElementById('wizardBodyFat');
+  const raw = parseFloat(input.value);
+  if (!Number.isFinite(raw) || raw <= 0 || raw >= 100) {
+    input.style.borderColor = 'var(--accent-warn)';
+    return;
+  }
+  goalWizardState.estimatedCurrentBFPercent = raw;
+  goalWizardState.bfMethod = 'manual';
+  Storage.saveProfile({ estimatedBFPercent: raw });
+  goalWizardState.step = 'weight';
+  renderGoalWizardStep();
+}
+
+function submitMeasuredBodyFat() {
+  const profile = Storage.getProfile();
+  const sex = profile.sex || 'male';
+  const errorEl = document.getElementById('measureError');
+
+  const neckCm = parseFloat(document.getElementById('measNeck').value);
+  const waistCm = parseFloat(document.getElementById('measWaist').value);
+  const hipCm = sex === 'female' ? parseFloat(document.getElementById('measHip').value) : null;
+
+  if (!profile.heightCm) {
+    errorEl.textContent = 'Add your height on the setup page first, then come back to this step.';
+    return;
+  }
+  if (!Number.isFinite(neckCm) || !Number.isFinite(waistCm) || (sex === 'female' && !Number.isFinite(hipCm))) {
+    errorEl.textContent = 'Fill in all measurements to calculate.';
+    return;
+  }
+
+  const bf = Nutrition.estimateBodyFatNavy({ sex, waistCm, neckCm, hipCm, heightCm: profile.heightCm });
+  if (bf == null) {
+    errorEl.textContent = "Those numbers don't work out to a valid estimate — double check the measurements (waist should be larger than neck) and try again.";
+    return;
+  }
+
+  goalWizardState.estimatedCurrentBFPercent = bf;
+  goalWizardState.bfMethod = 'navy';
+  Storage.saveProfile({ estimatedBFPercent: bf });
+  goalWizardState.step = 'weight';
+  renderGoalWizardStep();
+}
+
+/**
+ * Photo-based body-fat estimate. Mirrors handleMealPhotoSelected's
+ * compress -> show preview -> call AI -> handle result flow, but:
+ * - never writes the photo itself to Storage (only the numeric estimate),
+ *   since this is a photo of the user's body rather than of food
+ * - lets the user accept the AI's estimate or fall back to a manual
+ *   number if the estimate looks off, rather than only offering "redo"
+ */
+async function handleBodyFatPhotoSelected(file) {
+  if (!file) return;
+  const area = document.getElementById('bfPhotoArea');
+  area.innerHTML = `<p class="text-xs" style="color: var(--text-muted);">Compressing photo…</p>`;
+
+  let dataUrl;
+  try {
+    dataUrl = await compressImageForUpload(file);
+  } catch (e) {
+    area.innerHTML = `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(e.message)}</p>`;
+    return;
+  }
+
+  const base64 = dataUrl.split(',')[1];
+
+  // Preview only lives in this modal's DOM for the duration of the call —
+  // never assigned to goalWizardState or Storage, so it's gone as soon as
+  // the wizard moves past this step or the modal closes.
+  area.innerHTML = `
+    <img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 200px; object-fit: cover;" alt="Photo for body fat estimate">
+    <p class="text-xs flex items-center gap-1.5" style="color: var(--text-muted);">
+      <span class="spinner" style="width:10px;height:10px;"></span>
+      Estimating… usually takes a few seconds
+    </p>`;
+
+  const profile = Storage.getProfile();
+  const result = await BodyFatVision.estimateBodyFatFromPhoto(base64, 'image/jpeg', profile.sex);
+
+  // Modal may have moved on while this was in flight.
+  if (!document.getElementById('bfPhotoArea')) return;
+
+  const previewHTML = `<img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 200px; object-fit: cover;" alt="Photo for body fat estimate">`;
+
+  if (!result.ok) {
+    area.innerHTML = `
+      ${previewHTML}
+      <p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't get an estimate (${escapeHTML(result.error === 'missing_key' ? 'no API key' : result.error)}).</p>
+      <button class="btn-secondary w-full py-2 text-sm mt-2" onclick="goalWizardState.step='bodyfat_manual'; renderGoalWizardStep();">Enter a rough guess instead</button>`;
+    return;
+  }
+
+  const est = result.estimate;
+
+  if (!est.identified) {
+    area.innerHTML = `
+      ${previewHTML}
+      <p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(est.notes)}</p>
+      <div class="flex gap-2 mt-2">
+        <button class="btn-secondary flex-1 py-2 text-sm" onclick="document.getElementById('bfPhotoInput').click()">Try another photo</button>
+        <button class="btn-secondary flex-1 py-2 text-sm" onclick="goalWizardState.step='bodyfat_manual'; renderGoalWizardStep();">Enter a guess</button>
+      </div>`;
+    return;
+  }
+
+  area.innerHTML = `
+    ${previewHTML}
+    <p class="text-xs tag-suggest">✨ Estimated ${est.bfLow}–${est.bfHigh}% body fat · confidence: ${escapeHTML(est.confidence)}</p>
+    <p class="text-xs mt-0.5" style="color: var(--text-muted);">${escapeHTML(est.notes || 'This is a rough visual estimate — adjust it below if it looks off.')}</p>
+    <div>
+      <label class="text-xs" style="color: var(--text-muted);">Use this estimate (%)</label>
+      <input type="number" inputmode="decimal" id="bfPhotoEstimateValue" value="${est.bfPercent}" min="3" max="60">
+    </div>
+    <div class="flex gap-2 mt-2">
+      <button class="btn-secondary flex-1 py-2 text-sm" onclick="document.getElementById('bfPhotoInput').click()">Retake</button>
+      <button class="btn-primary flex-1 py-2 text-sm" onclick="submitPhotoBodyFat()">Use this</button>
+    </div>`;
+}
+
+function submitPhotoBodyFat() {
+  const input = document.getElementById('bfPhotoEstimateValue');
+  const raw = parseFloat(input.value);
+  if (!Number.isFinite(raw) || raw <= 0 || raw >= 100) {
+    input.style.borderColor = 'var(--accent-warn)';
+    return;
+  }
+  goalWizardState.estimatedCurrentBFPercent = raw;
+  goalWizardState.bfMethod = 'photo';
+  Storage.saveProfile({ estimatedBFPercent: raw });
+  goalWizardState.step = 'weight';
+  renderGoalWizardStep();
+}
+
+function saveGoalWizard() {
+  const input = document.getElementById('wizardGoalWeight');
+  const raw = parseFloat(input.value);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    input.style.borderColor = 'var(--accent-warn)';
+    return;
+  }
+
+  const settings = Storage.getSettings();
+  const goalWeightKg = settings.units === 'lb' ? raw / 2.20462 : raw;
+  const intent = Nutrition.GOAL_INTENTS[goalWizardState.intent];
+
+  Storage.saveProfile({
+    goalIntent: goalWizardState.intent,
+    goalWeightKg: Math.round(goalWeightKg * 10) / 10,
+    nutritionGoal: intent.nutritionGoal,
+  });
+
+  const updatedProfile = Storage.getProfile();
+  if (Nutrition.hasCompleteProfileForCalc(updatedProfile)) {
+    Nutrition.recalculateAndSaveTargets();
+  }
+
+  closeModal();
+  renderNutritionProfileForm();
+  showToast('Goal saved.');
+}
+
+// Shown after saving, only if a goal weight is set — recommends a calorie
+// target for a *safe* pace toward that goal (independent of whatever the
+// user's current calorieTarget/nutritionGoal cut-bulk delta happens to be),
+// and offers to apply it directly so the guidance isn't just informational.
+function renderGoalGuidance() {
+  const container = document.getElementById('goalGuidanceCard');
+  if (!container) return;
+
+  const profile = Storage.getProfile();
+  const nutritionProfile = Storage.getNutritionProfile();
+
+  if (!profile.goalWeightKg || nutritionProfile.tdee == null) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const rec = Nutrition.recommendCalorieTargetForGoal({
+    currentWeightKg: profile.weightKg,
+    goalWeightKg: profile.goalWeightKg,
+    tdee: nutritionProfile.tdee,
+  });
+
+  if (!rec) { container.innerHTML = ''; return; }
+
+  const settings = Storage.getSettings();
+  const displayWeight = (kg) => settings.units === 'lb' ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+
+  if (rec.status === 'at_goal') {
+    container.innerHTML = `
+      <div class="card p-3" style="background: var(--bg-elevated);">
+        <p class="text-sm">You're already at your goal weight — targets are set to maintain.</p>
+      </div>`;
+    return;
+  }
+
+  const etaStr = rec.etaDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const verb = rec.direction === 'lose' ? 'lose' : 'gain';
+  const intent = Nutrition.GOAL_INTENTS[profile.goalIntent];
+  const intentLine = intent ? `For "${escapeHTML(intent.label)}," that generally means ${escapeHTML(intent.blurb)}.` : '';
+
+  container.innerHTML = `
+    <div class="card p-3 space-y-2" style="background: var(--bg-elevated);">
+      <p class="font-display font-semibold text-sm">Best way to get there</p>
+      ${intentLine ? `<p class="text-sm">${intentLine}</p>` : ''}
+      <p class="text-sm">
+        To ${verb} safely (about ${displayWeight(rec.safeWeeklyKg)}${unitLabel}/week), aim for roughly
+        <strong>${rec.recommendedCalorieTarget} kcal/day</strong>. At that pace you'd reach
+        ${displayWeight(profile.goalWeightKg)}${unitLabel} in about ${rec.estimatedWeeks} weeks (around ${etaStr}).
+      </p>
+      <p class="text-xs" style="color: var(--text-muted);">
+        Faster is possible but tends to cost more muscle (cutting) or add more fat (bulking) along the way — this pace is a common sustainable default, not a hard rule.
+      </p>
+      <button class="btn-primary w-full py-2 text-sm" onclick="applyGoalRecommendedTarget(${rec.recommendedCalorieTarget})">Use ${rec.recommendedCalorieTarget} kcal as my target</button>
+    </div>`;
+}
+
+function applyGoalRecommendedTarget(calorieTarget) {
+  const profile = Storage.getProfile();
+  const recalculated = Nutrition.recalculateMacrosForCalorieTarget(calorieTarget, profile);
+  Storage.saveNutritionProfile({ ...recalculated, lastCalculatedAt: Date.now() });
+  showToast('Target updated to ' + calorieTarget + ' kcal.');
+  Nav.go('nutrition');
 }
 
 function saveNutritionProfileForm() {
@@ -1676,13 +2105,14 @@ function saveNutritionProfileForm() {
   if (!Nutrition.hasCompleteProfileForCalc(updatedProfile)) {
     status.textContent = 'Saved — fill in age, sex, weight, and height to calculate targets.';
     status.style.color = 'var(--text-muted)';
+    renderGoalGuidance();
     return;
   }
 
   Nutrition.recalculateAndSaveTargets();
   status.textContent = 'Targets updated.';
   status.style.color = 'var(--accent-success)';
-  setTimeout(() => Nav.go('nutrition'), 500);
+  renderGoalGuidance();
 }
 
 function renderNutrition() {
@@ -1744,6 +2174,11 @@ function renderNutrition() {
       Log a meal
     </button>
 
+    <button class="w-full btn-primary py-3 flex items-center justify-center gap-2" onclick="openDailySummaryModal()" ${todaysMeals.length === 0 ? 'disabled' : ''}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Log My Day
+    </button>
+
     <div class="card p-4">
       <p class="font-display font-semibold text-sm mb-3">Today's meals</p>
       <div id="todaysMealsList" class="space-y-2">
@@ -1770,6 +2205,131 @@ function renderNutrition() {
 function deleteMealAndRefresh(mealId) {
   Storage.deleteMeal(mealId);
   renderNutrition();
+}
+
+/* ---------------- Daily summary & weight prediction ---------------- */
+
+// Pulls today's meals + targets, computes totals, and hands off to
+// Nutrition.projectWeeklyWeightChange() for the forward-looking "if every
+// day looked like today" projection. Presented as a modal (not inline)
+// since it's an on-demand snapshot the user requests, not part of the
+// always-visible dashboard state.
+function openDailySummaryModal() {
+  const todaysMeals = Storage.getMealsForDate();
+  const nutritionProfile = Storage.getNutritionProfile();
+  const profile = Storage.getProfile();
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  const displayWeight = (kg) => settings.units === 'lb' ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
+
+  const totals = todaysMeals.reduce((acc, m) => {
+    acc.calories += m.calories || 0;
+    acc.protein += m.protein || 0;
+    acc.carbs += m.carbs || 0;
+    acc.fats += m.fats || 0;
+    return acc;
+  }, { calories: 0, protein: 0, carbs: 0, fats: 0 });
+
+  const tdee = nutritionProfile.tdee;
+  const currentWeightKg = profile.weightKg;
+  const projection = (tdee != null && currentWeightKg != null)
+    ? Nutrition.projectWeeklyWeightChange(totals.calories, tdee, currentWeightKg)
+    : null;
+
+  const displayDelta = (kg) => {
+    const val = settings.units === 'lb' ? kg * 2.20462 : kg;
+    return Math.round(Math.abs(val) * 100) / 100;
+  };
+
+  let projectionHTML;
+  if (!projection) {
+    projectionHTML = `
+      <p class="text-sm" style="color: var(--text-muted);">
+        Set up your nutrition targets (age, sex, weight, height) to see a weight projection — we need your TDEE and current weight to estimate this.
+      </p>`;
+  } else if (projection.direction === 'maintain') {
+    projectionHTML = `
+      <p class="text-sm">
+        Today's total is right around your maintenance level (${tdee} kcal TDEE). If every day looked like today, you'd stay close to <strong>${displayWeight(currentWeightKg)}${unitLabel}</strong> this week.
+      </p>`;
+  } else {
+    const verb = projection.direction === 'lose' ? 'lose' : 'gain';
+    const sign = projection.dailyDelta > 0 ? '+' : '';
+    projectionHTML = `
+      <p class="text-sm">
+        Today's total is <span class="font-mono">${sign}${projection.dailyDelta} kcal</span> vs. your ${tdee} kcal TDEE.
+        If you ate like this every day, you'd roughly <strong>${verb} ${displayDelta(projection.weeklyDeltaKg)}${unitLabel}</strong> over 7 days —
+        putting you around <strong>${displayWeight(projection.projectedWeightKg)}${unitLabel}</strong> (from ${displayWeight(currentWeightKg)}${unitLabel} today).
+      </p>
+      <p class="text-xs" style="color: var(--text-muted);">
+        A rough estimate based on one day's log (~7700 kcal ≈ 1kg of bodyfat) — not a precise prediction. Actual results vary with water weight, activity, and day-to-day differences in what you eat.
+      </p>`;
+  }
+
+  // If a goal weight is set, also show how long the *current pace* would
+  // take to get there — separate from the fixed-recommendation card on the
+  // setup form, since this one reflects what they actually ate today.
+  let goalHTML = '';
+  if (profile.goalWeightKg && projection) {
+    const eta = Nutrition.estimateTimeToGoal({
+      currentWeightKg,
+      goalWeightKg: profile.goalWeightKg,
+      dailyDelta: projection.dailyDelta,
+    });
+    if (eta?.status === 'ok') {
+      const etaStr = eta.etaDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      goalHTML = `
+        <div class="card p-3 space-y-1" style="background: var(--bg-elevated);">
+          <p class="font-display font-semibold text-sm">Goal: ${displayWeight(profile.goalWeightKg)}${unitLabel}</p>
+          <p class="text-sm">At today's pace, you'd reach your goal in about <strong>${eta.weeks} weeks</strong> (around ${etaStr}).</p>
+        </div>`;
+    } else if (eta?.status === 'wrong_direction') {
+      goalHTML = `
+        <div class="card p-3 space-y-1" style="background: var(--bg-elevated);">
+          <p class="font-display font-semibold text-sm">Goal: ${displayWeight(profile.goalWeightKg)}${unitLabel}</p>
+          <p class="text-sm">Today's intake would move you away from this goal rather than toward it. Check the guidance on your nutrition setup page for a target that fits.</p>
+        </div>`;
+    } else if (eta?.status === 'at_goal') {
+      goalHTML = `
+        <div class="card p-3" style="background: var(--bg-elevated);">
+          <p class="text-sm">You're already at your goal weight of ${displayWeight(profile.goalWeightKg)}${unitLabel}.</p>
+        </div>`;
+    }
+  }
+
+  const macroLine = (label, val) => `
+    <div class="flex items-center justify-between text-sm py-1.5 border-b" style="border-color: var(--border);">
+      <span style="color: var(--text-muted);">${label}</span>
+      <span class="font-mono">${Math.round(val)}${label === 'Calories' ? ' kcal' : 'g'}</span>
+    </div>`;
+
+  const modal = document.getElementById('modalRoot');
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+        <div class="flex items-center justify-between">
+          <p class="font-display font-bold text-lg">Today's Summary</p>
+          <button class="text-sm" style="color: var(--text-muted);" onclick="closeModal()">Close</button>
+        </div>
+
+        <div>
+          ${macroLine('Calories', totals.calories)}
+          ${macroLine('Protein', totals.protein)}
+          ${macroLine('Carbs', totals.carbs)}
+          ${macroLine('Fats', totals.fats)}
+        </div>
+
+        <div class="card p-3 space-y-2" style="background: var(--bg-elevated);">
+          <p class="font-display font-semibold text-sm">7-day projection</p>
+          ${projectionHTML}
+        </div>
+
+        ${goalHTML}
+        <button class="w-full btn-secondary py-2 text-sm" onclick="Nav.go('nutritionProfile'); openGoalWizard();">${profile.goalWeightKg ? 'Change goal weight' : 'Set a goal weight'}</button>
+
+        <button class="w-full btn-secondary py-3" onclick="closeModal()">Done</button>
+      </div>
+    </div>`;
 }
 
 /* ---------------- Weight tracker ---------------- */

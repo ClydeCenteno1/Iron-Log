@@ -170,6 +170,18 @@ function getProfile() {
     nutritionGoal: 'maintain',  // cut | maintain | bulk — separate from `goal` above on purpose,
                                  // since the two use different value sets (see nutrition.js GOAL_ADJUSTMENTS
                                  // vs generator.js GOAL_CONFIG) and previously collided when both wrote to `goal`.
+    goalWeightKg: null,         // optional target bodyweight — powers the "time to goal" projection in
+                                 // nutrition.js. Null means the user hasn't set one; features that use it
+                                 // should degrade gracefully (show current-trajectory info only) rather
+                                 // than blocking on it, since not everyone tracking food has a target weight.
+    goalIntent: null,           // key into Nutrition.GOAL_INTENTS (e.g. 'get_abs', 'lose_fat') — captured
+                                 // by the goal-setup wizard alongside goalWeightKg, purely for tailoring
+                                 // guidance copy. nutritionGoal (cut/maintain/bulk) remains the value that
+                                 // actually drives calorie/macro math; this is presentation-only.
+    estimatedBFPercent: null,   // most recent body-fat % estimate (U.S. Navy circumference method, or
+                                 // manually entered) — captured during the goal wizard for get_abs, but
+                                 // stored on the profile (not just the wizard's local state) so it can be
+                                 // reused elsewhere (e.g. re-running the wizard later, or a future BF trend).
     trainingStyle: 'balanced', // hiit_low_volume | high_volume | balanced
     experienceLevel: 'beginner',
     equipment: [],
