@@ -36,6 +36,60 @@
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
   .elevated { background: var(--bg-elevated); }
 
+  /* ---------------- Home hero: Apple-Watch-style activity ring + blob cards ----------------
+     Ring uses the app's own logged/suggest/warn tokens (not new colors) so it stays
+     consistent with the plate-stack, tags, and dots used everywhere else. Values are driven
+     entirely by stroke-dashoffset set inline per-ring from real numbers computed in JS —
+     nothing here is decorative/fake. */
+  .hero-blob {
+    border-radius: 32px;
+    background: linear-gradient(155deg, var(--card) 0%, var(--bg-elevated) 100%);
+    border: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  .ring-track { fill: none; stroke: var(--border); stroke-width: 10; }
+  .ring-progress {
+    fill: none; stroke-width: 10; stroke-linecap: round;
+    transform: rotate(-90deg); transform-origin: 50% 50%;
+    transition: stroke-dashoffset .6s cubic-bezier(.16,1,.3,1);
+  }
+  .ring-progress.ring-logged  { stroke: var(--accent-logged); }
+  .ring-progress.ring-suggest { stroke: var(--accent-suggest); }
+  .ring-progress.ring-warn    { stroke: var(--accent-warn); }
+
+  .stat-tile {
+    border-radius: 24px; padding: 16px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    min-height: 108px;
+    transition: transform .12s cubic-bezier(.34,1.56,.64,1);
+  }
+  .stat-tile:active { transform: scale(0.97); }
+  .stat-tile-logged  { background: color-mix(in srgb, var(--accent-logged) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-logged) 30%, transparent); }
+  .stat-tile-suggest { background: color-mix(in srgb, var(--accent-suggest) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-suggest) 30%, transparent); }
+  .stat-tile-warn    { background: color-mix(in srgb, var(--accent-warn) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-warn) 30%, transparent); }
+
+  .blob-card {
+    border-radius: 28px; padding: 18px; position: relative; overflow: hidden;
+    transition: transform .12s cubic-bezier(.34,1.56,.64,1), box-shadow .15s ease;
+  }
+  .blob-card:active { transform: scale(0.98); }
+  @media (hover: hover) { .blob-card:hover { box-shadow: var(--shadow); } }
+  .blob-card-suggest { background: color-mix(in srgb, var(--accent-suggest) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-suggest) 28%, transparent); }
+  .blob-card-logged  { background: color-mix(in srgb, var(--accent-logged) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-logged) 28%, transparent); }
+
+  /* Rounded pill segmented-control, echoing the reference screens' "All / Running / Cycling" pills */
+  .pill-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .pill-row::-webkit-scrollbar { display: none; }
+  .pill {
+    flex-shrink: 0; padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-muted);
+    transition: background .15s ease, color .15s ease, transform .12s ease;
+  }
+  .pill:active { transform: scale(0.95); }
+  .pill.pill-active { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+
   input[type="number"], input[type="text"], select, textarea {
     background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text);
     border-radius: 10px; padding: 10px 12px; width: 100%;
@@ -82,6 +136,14 @@
   .nav-dot { opacity: 0; transition: opacity .2s ease, transform .2s cubic-bezier(.34,1.56,.64,1); transform: scale(0.4); }
   .nav-item svg { transition: transform .18s cubic-bezier(.34,1.56,.64,1); }
   .nav-item.active svg { transform: translateY(-1px); }
+
+  /* Bubble behind the active tab's icon — the "pill nav" look from the reference
+     screens / watchOS dock, layered onto the existing 6-tab bar without restructuring it. */
+  .nav-icon-wrap {
+    width: 34px; height: 34px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+    transition: background .2s cubic-bezier(.16,1,.3,1), transform .2s cubic-bezier(.34,1.56,.64,1);
+  }
+  .nav-item.active .nav-icon-wrap { background: color-mix(in srgb, var(--accent-logged) 20%, transparent); transform: scale(1.06); }
 
   /* Plate stack signature element */
   .plate-stack { display: flex; align-items: flex-end; gap: 3px; height: 28px; }
@@ -202,17 +264,47 @@
       </div>
 
       <div id="dashboardContent" class="space-y-4">
-        <div class="card p-4">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-sm" style="color: var(--text-muted);">This week</span>
-            <span id="weekConsistency" class="text-sm font-mono">0/0 days</span>
+
+        <!-- Hero: activity ring (real days-logged-this-week progress, watchOS style) -->
+        <div class="hero-blob p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <p class="font-display font-bold text-lg">Your Activity</p>
+              <p class="text-sm" style="color: var(--text-muted);" id="weekConsistencyLabel">This week</p>
+            </div>
+            <span id="weekConsistency" class="text-sm font-mono px-2.5 py-1 rounded-full" style="background: var(--bg-elevated); border: 1px solid var(--border);">0/0 days</span>
           </div>
-          <div id="weekDots" class="flex gap-1.5"></div>
+          <div class="flex items-center gap-5">
+            <svg id="weekRing" width="88" height="88" viewBox="0 0 88 88" class="flex-shrink-0">
+              <circle class="ring-track" cx="44" cy="44" r="38"></circle>
+              <circle id="weekRingProgress" class="ring-progress ring-logged" cx="44" cy="44" r="38"
+                      stroke-dasharray="238.76" stroke-dashoffset="238.76"></circle>
+            </svg>
+            <div id="weekDots" class="flex gap-1.5 flex-1"></div>
+          </div>
         </div>
 
-        <div id="activePlanCard" class="hidden card p-4 border-l-4" style="border-left-color: var(--accent-suggest);"></div>
+        <!-- 2-up stat tiles, watchOS complication style — real numbers (sets logged, plan progress) -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="stat-tile stat-tile-logged">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium" style="color: var(--text-muted);">Sets logged</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-logged);"><path d="M6 3v18M18 3v18M3 8h6M3 16h6M15 8h6M15 16h6"/></svg>
+            </div>
+            <p id="statSetsLogged" class="font-display font-bold text-2xl">0</p>
+          </div>
+          <div class="stat-tile stat-tile-suggest">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium" style="color: var(--text-muted);">Plan progress</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-suggest);"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+            </div>
+            <p id="statPlanProgress" class="font-display font-bold text-2xl">—</p>
+          </div>
+        </div>
 
-        <div id="activeSessionCard" class="hidden card p-4 border-l-4" style="border-left-color: var(--accent-logged);">
+        <div id="activePlanCard" class="hidden blob-card blob-card-suggest"></div>
+
+        <div id="activeSessionCard" class="hidden blob-card blob-card-logged">
           <div class="flex items-center justify-between">
             <div>
               <p class="font-display font-semibold">Session in progress</p>
@@ -222,31 +314,22 @@
           </div>
         </div>
 
-        <button id="startSessionBtn" class="w-full btn-primary text-left px-5 py-4 flex items-center justify-between">
+        <button id="startSessionBtn" class="w-full btn-primary text-left px-5 py-4 flex items-center justify-between" style="border-radius: 24px;">
           <span class="font-display font-semibold text-base">Log workout</span>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="flex items-center justify-center rounded-full" style="width: 32px; height: 32px; background: rgba(14,15,18,0.15);">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          </span>
         </button>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <button class="card p-4 text-left" onclick="Nav.go('generator')">
-            <p class="font-display font-semibold text-sm">Generate plan</p>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">AI or rules-based</p>
-          </button>
-          <button class="card p-4 text-left" onclick="Nav.go('manualBuilder')">
-            <p class="font-display font-semibold text-sm">Build my own</p>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">No AI, your exercises</p>
-          </button>
-          <button class="card p-4 text-left" onclick="Nav.go('history')">
-            <p class="font-display font-semibold text-sm">History</p>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">Past sessions & trends</p>
-          </button>
-          <button class="card p-4 text-left" onclick="Nav.go('programs')">
-            <p class="font-display font-semibold text-sm">My programs</p>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">Saved & past plans</p>
-          </button>
+        <div class="pill-row pb-1">
+          <button class="pill pill-active" onclick="Nav.go('dashboard')">All</button>
+          <button class="pill" onclick="Nav.go('generator')">Generate plan</button>
+          <button class="pill" onclick="Nav.go('manualBuilder')">Build my own</button>
+          <button class="pill" onclick="Nav.go('history')">History</button>
+          <button class="pill" onclick="Nav.go('programs')">My programs</button>
         </div>
 
-        <div class="card p-4">
+        <div class="card p-4" style="border-radius: 24px;">
           <p class="font-display font-semibold text-sm mb-3">Recent lifts</p>
           <div id="recentLifts" class="space-y-2 text-sm">
             <p style="color: var(--text-muted);">No sessions logged yet.</p>
@@ -417,27 +500,27 @@
   <nav class="fixed bottom-0 left-0 right-0 z-30 elevated border-t safe-bottom" style="border-color: var(--border);">
     <div class="app-width grid grid-cols-6 text-xs">
       <button class="nav-item active flex flex-col items-center gap-1 py-3" data-nav="dashboard" onclick="Nav.go('dashboard')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+        <span class="nav-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg></span>
         <span>Home</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
       <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="generator" onclick="Nav.go('generator')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+        <span class="nav-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg></span>
         <span>Plan</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
       <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="library" onclick="Nav.go('library')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z"/></svg>
+        <span class="nav-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z"/></svg></span>
         <span>Library</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
       <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="chat" onclick="Nav.go('chat')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="nav-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
         <span>Coach</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
       <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="nutrition" onclick="Nav.go('nutrition')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 22a7 7 0 0 0 7-7c0-3-2-5-3-8-.6 1.5-1 2-2 2.5C13 8 13 6 11 4c0 3-3 4-5 7a7 7 0 0 0 6 11z"/></svg>
+        <span class="nav-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 22a7 7 0 0 0 7-7c0-3-2-5-3-8-.6 1.5-1 2-2 2.5C13 8 13 6 11 4c0 3-3 4-5 7a7 7 0 0 0 6 11z"/></svg></span>
         <span>Fuel</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
       <button class="nav-item flex flex-col items-center gap-1 py-3" data-nav="history" onclick="Nav.go('history')">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 4-8"/></svg>
+        <span class="nav-icon-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 4-8"/></svg></span>
         <span>History</span><span class="nav-dot w-1 h-1 rounded-full dot-logged"></span>
       </button>
     </div>

@@ -176,7 +176,7 @@ function renderDashboard() {
             ? `Last: ${new Date(lastForDay.session.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
             : 'Not logged yet';
           return `
-          <button class="btn-primary py-2.5 text-sm text-left px-3 flex items-center justify-between" onclick="startSessionFromPlanDay(${day.dayNumber})">
+          <button class="btn-primary py-2.5 text-sm text-left px-4 flex items-center justify-between" style="border-radius: 18px;" onclick="startSessionFromPlanDay(${day.dayNumber})">
             <span>Day ${day.dayNumber}: ${escapeHTML(day.focus)}</span>
             <span class="text-xs opacity-80">${day.exercises.length} ex &middot; ${lastLabel}</span>
           </button>`;
@@ -187,19 +187,41 @@ function renderDashboard() {
     planCard.classList.add('hidden');
   }
 
-  // Week consistency dots (last 7 days)
+  // Plan-progress stat tile: fraction of this plan's days that have at
+  // least one logged session, e.g. "2/4 days" — real data, same source
+  // (getSessionsForPlan) the plan card itself already uses above.
+  const statPlanProgressEl = document.getElementById('statPlanProgress');
+  if (plan && plan.days && plan.days.length) {
+    const planSessionsForStat = getSessionsForPlan(plan, sessions);
+    const daysWithSessions = new Set(planSessionsForStat.map(item => item.dayNumber)).size;
+    statPlanProgressEl.textContent = `${daysWithSessions}/${plan.days.length}`;
+  } else {
+    statPlanProgressEl.textContent = '—';
+  }
+
+
+  // Week consistency dots (last 7 days) — same loop also drives the
+  // activity ring above (real days-logged/7 progress, not decorative)
+  // and a "sets logged this week" stat tile from the same date range.
   const today = new Date();
   const weekDots = document.getElementById('weekDots');
   weekDots.innerHTML = '';
   let daysLogged = 0;
+  let setsLoggedThisWeek = 0;
   for (let i = 6; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const dayStr = d.toDateString();
-    const hasSession = sessions.some(s => new Date(s.date).toDateString() === dayStr);
+    const sessionsThatDay = sessions.filter(s => new Date(s.date).toDateString() === dayStr);
+    const hasSession = sessionsThatDay.length > 0;
     if (hasSession) daysLogged++;
+    sessionsThatDay.forEach(s => {
+      s.entries.forEach(e => {
+        setsLoggedThisWeek += (e.sets || []).filter(set => !set.isWarmup && (set.weight != null || set.reps != null)).length;
+      });
+    });
     const dot = document.createElement('div');
-    dot.className = 'flex-1 h-8 rounded-md flex items-center justify-center text-[10px] font-mono stagger-in';
+    dot.className = 'flex-1 h-8 rounded-full flex items-center justify-center text-[10px] font-mono stagger-in';
     dot.style.animationDelay = `${(6 - i) * 30}ms`;
     dot.style.background = hasSession ? 'var(--accent-logged)' : 'var(--bg-elevated)';
     dot.style.color = hasSession ? '#0E0F12' : 'var(--text-muted)';
@@ -208,6 +230,15 @@ function renderDashboard() {
     weekDots.appendChild(dot);
   }
   document.getElementById('weekConsistency').textContent = `${daysLogged}/7 days`;
+  document.getElementById('statSetsLogged').textContent = String(setsLoggedThisWeek);
+
+  // Ring: circumference is fixed (2*pi*38 ≈ 238.76, matches the SVG's r=38),
+  // dashoffset counts down from full-circumference (empty) to 0 (full week).
+  const ringCircumference = 238.76;
+  const ringProgress = document.getElementById('weekRingProgress');
+  const ringFraction = Math.min(1, daysLogged / 7);
+  ringProgress.style.strokeDashoffset = String(ringCircumference * (1 - ringFraction));
+
 
   // Active session banner
   const activeCard = document.getElementById('activeSessionCard');
