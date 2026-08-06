@@ -48,18 +48,27 @@ function hasGeminiKey() {
 }
 
 /**
- * Calls Gemini with a system instruction + user prompt, optionally with an
- * inline image (for vision calls like meal photo estimation).
+ * Calls Gemini with a system instruction + user prompt, optionally with one
+ * or more inline images (for vision calls like meal photo estimation — a
+ * second angle photo is what lets the model reason about food *depth*,
+ * which a single top-down shot can't show).
  * If jsonMode is true, requests structured JSON output.
  * Returns { ok: true, text } or { ok: true, data } (if jsonMode) or { ok: false, error }.
+ *
+ * images: optional array of { imageBase64, imageMimeType }, for multi-photo
+ * calls. imageBase64/imageMimeType (singular) is kept for backward
+ * compatibility with every other call site in the app that only ever sends
+ * one image; if both are supplied, images (plural) wins.
  */
-async function callGemini({ systemInstruction, prompt, jsonMode = false, imageBase64 = null, imageMimeType = null }) {
+async function callGemini({ systemInstruction, prompt, jsonMode = false, imageBase64 = null, imageMimeType = null, images = null }) {
   const key = getGeminiKey();
   if (!key) return { ok: false, error: 'missing_key' };
 
   const userParts = [{ text: prompt }];
-  if (imageBase64) {
-    userParts.push({ inlineData: { mimeType: imageMimeType || 'image/jpeg', data: imageBase64 } });
+  const imageList = images && images.length ? images : (imageBase64 ? [{ imageBase64, imageMimeType }] : []);
+  for (const img of imageList) {
+    if (!img || !img.imageBase64) continue;
+    userParts.push({ inlineData: { mimeType: img.imageMimeType || 'image/jpeg', data: img.imageBase64 } });
   }
 
   const body = {

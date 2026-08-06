@@ -2490,10 +2490,23 @@ function applyWeightTrendSuggestion(newTarget) {
   renderNutrition();
 }
 
-let mealModalState = { photoDataUrl: null, photoBase64: null, estimateRange: null, source: 'manual', lastEstimate: null };
+let mealModalState = { photoDataUrl: null, photoBase64: null, secondPhotoDataUrl: null, secondPhotoBase64: null, estimateRange: null, source: 'manual', lastEstimate: null };
+
+// Rendered inside a <details> so it's available but doesn't eat vertical
+// space by default — most people will glance at it once and remember the
+// gist (reference object + top-down + side angle for tall/piled food).
+function renderMealPhotoTipsHTML() {
+  return `
+    <details class="mb-2" style="font-size: 0.75rem;">
+      <summary style="color: var(--text-muted); cursor: pointer;">📸 Tips for a more accurate estimate</summary>
+      <ul class="mt-1.5 space-y-1 pl-0.5" style="list-style: none; color: var(--text-muted);">
+        ${MealVision.MEAL_PHOTO_TIPS.map(t => `<li class="flex items-start gap-1.5"><span>${t.icon}</span><span>${escapeHTML(t.text)}</span></li>`).join('')}
+      </ul>
+    </details>`;
+}
 
 function openLogMealModal() {
-  mealModalState = { photoDataUrl: null, photoBase64: null, estimateRange: null, source: 'manual', lastEstimate: null };
+  mealModalState = { photoDataUrl: null, photoBase64: null, secondPhotoDataUrl: null, secondPhotoBase64: null, estimateRange: null, source: 'manual', lastEstimate: null };
   const modal = document.getElementById('modalRoot');
   modal.innerHTML = `
     <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);">
@@ -2503,6 +2516,7 @@ function openLogMealModal() {
         <div id="mealPhotoArea">
           ${AIProvider.hasAnyKey() ? `
             <input type="file" accept="image/*" capture="environment" id="mealPhotoInput" class="hidden" onchange="handleMealPhotoSelected(this.files[0])">
+            ${renderMealPhotoTipsHTML()}
             <div class="mb-2">
               <label class="text-xs" style="color: var(--text-muted);">Anything the photo won't show? (optional, but helps a lot)</label>
               <input type="text" id="mealPhotoContext" placeholder="e.g. 2 cups rice, no oil, small portion">
@@ -2636,7 +2650,7 @@ async function handleMealPhotoSelected(file) {
       Asking the AI to estimate… usually takes a few seconds
     </p>`;
 
-  const result = await MealVision.estimateMealFromPhoto(base64, 'image/jpeg', contextNote);
+  const result = await MealVision.estimateMealFromPhoto(base64, 'image/jpeg', contextNote, mealModalState.secondPhotoBase64, 'image/jpeg');
 
   // Modal may have been closed/reopened while this was in flight.
   if (!document.getElementById('mealPhotoArea')) return;
@@ -2649,11 +2663,75 @@ async function handleMealPhotoSelected(file) {
   }
 
   applyMealEstimateToForm(result.estimate, {
-    areaHTML: dataUrl
-      ? `<img src="${dataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`
-      : '',
+    areaHTML: buildMealPhotoPreviewHTML(),
     hasPhoto: true,
     sourceLabel: 'from the photo',
+  });
+}
+
+/**
+ * Renders whichever photo(s) are currently attached in mealModalState —
+ * shared by every render path (initial estimate, second-angle add, refine)
+ * so the preview never silently drops the second photo once one's added.
+ */
+function buildMealPhotoPreviewHTML() {
+  if (!mealModalState.photoDataUrl) return '';
+  const imgs = [`<img src="${mealModalState.photoDataUrl}" class="w-full rounded-lg" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`];
+  if (mealModalState.secondPhotoDataUrl) {
+    imgs.push(`<img src="${mealModalState.secondPhotoDataUrl}" class="w-full rounded-lg" style="max-height: 160px; object-fit: cover;" alt="Side-angle photo of the meal">`);
+  }
+  return `<div class="grid ${imgs.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-2">${imgs.join('')}</div>`;
+}
+
+/**
+ * Handles the optional "add a side angle" photo — a second shot of the same
+ * food used purely to give the model depth/height information a top-down
+ * photo can't show (see meal-vision.js's ACCURACY MODEL note). Re-runs the
+ * estimate with both photos attached once the second one is compressed.
+ */
+async function handleMealSecondPhotoSelected(file) {
+  if (!file || !mealModalState.photoBase64) return;
+  const area = document.getElementById('mealPhotoArea');
+  const contextInput = document.getElementById('mealPhotoContext');
+  const contextNote = contextInput ? contextInput.value.trim() : '';
+
+  let dataUrl;
+  try {
+    dataUrl = await compressImageForUpload(file);
+  } catch (e) {
+    if (area) area.insertAdjacentHTML('beforeend', `<p class="text-xs mt-1" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(e.message)}</p>`);
+    return;
+  }
+
+  mealModalState.secondPhotoDataUrl = dataUrl;
+  mealModalState.secondPhotoBase64 = dataUrl.split(',')[1];
+
+  if (area) {
+    area.innerHTML = `
+      ${buildMealPhotoPreviewHTML()}
+      <p class="text-xs flex items-center gap-1.5" style="color: var(--text-muted);">
+        <span class="spinner" style="width:10px;height:10px;"></span>
+        Re-estimating with the side angle…
+      </p>`;
+  }
+
+  const result = await MealVision.estimateMealFromPhoto(mealModalState.photoBase64, 'image/jpeg', contextNote, mealModalState.secondPhotoBase64, 'image/jpeg');
+
+  if (!document.getElementById('mealPhotoArea')) return;
+
+  if (!result.ok) {
+    if (area) {
+      area.innerHTML = `
+        ${buildMealPhotoPreviewHTML()}
+        <p class="text-xs" style="color: var(--accent-warn, #E8B23A);">Couldn't update the estimate (${escapeHTML(result.error === 'missing_key' ? 'no API key' : result.error)}). Your first-photo estimate above is still applied.</p>`;
+    }
+    return;
+  }
+
+  applyMealEstimateToForm(result.estimate, {
+    areaHTML: buildMealPhotoPreviewHTML(),
+    hasPhoto: true,
+    sourceLabel: 'from the two photos',
   });
 }
 
@@ -2670,9 +2748,7 @@ async function handleMealTextSubmitted() {
   if (!description) return;
 
   const area = document.getElementById('mealPhotoArea');
-  const priorPhotoHTML = mealModalState.photoDataUrl
-    ? `<img src="${mealModalState.photoDataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`
-    : '';
+  const priorPhotoHTML = buildMealPhotoPreviewHTML();
 
   area.innerHTML = `
     ${priorPhotoHTML}
@@ -2707,12 +2783,24 @@ async function handleMealTextSubmitted() {
  */
 function applyMealEstimateToForm(est, { areaHTML, hasPhoto, sourceLabel }) {
   const area = document.getElementById('mealPhotoArea');
+  // Offer "add a side angle" only when there's a first photo, no second one
+  // yet, and confidence isn't already high — a confident top-down read of a
+  // flat dish (e.g. a sandwich) doesn't need a depth shot, but low/medium
+  // confidence on something that could be piled is exactly when a side
+  // angle helps most.
+  const offerSecondPhoto = hasPhoto && !mealModalState.secondPhotoBase64 && est.identified && est.confidence !== 'high';
   area.innerHTML = `
     ${areaHTML}
     ${est.identified
       ? `<p class="text-xs tag-suggest">✨ Estimated ${est.caloriesLow}–${est.caloriesHigh} kcal · confidence: ${escapeHTML(est.confidence)}</p>
-         <p class="text-xs mt-0.5" style="color: var(--text-muted);">${escapeHTML(est.notes || `This is an estimate ${sourceLabel} — adjust anything below that looks off.`)}</p>`
+         <p class="text-xs mt-0.5" style="color: var(--text-muted);">${escapeHTML(est.notes || `This is an estimate ${sourceLabel} — adjust anything below that looks off.`)}</p>
+         ${est.referenceUsed ? `<p class="text-xs mt-0.5" style="color: var(--text-muted);"><em>Scale used: ${escapeHTML(est.referenceUsed)}</em></p>` : ''}`
       : `<p class="text-xs" style="color: var(--accent-warn, #E8B23A);">${escapeHTML(est.notes)}</p>`}
+    ${offerSecondPhoto ? `
+      <input type="file" accept="image/*" capture="environment" id="mealSecondPhotoInput" class="hidden" onchange="handleMealSecondPhotoSelected(this.files[0])">
+      <button class="w-full btn-secondary py-2 text-xs mt-2" onclick="document.getElementById('mealSecondPhotoInput').click()">
+        📐 Add a side-angle photo (optional, uses another AI call)
+      </button>` : ''}
   `;
 
   if (!est.identified) {
@@ -2770,6 +2858,8 @@ async function handleMealRefineSubmitted() {
     correctionText,
     imageBase64: mealModalState.photoBase64,
     imageMimeType: 'image/jpeg',
+    secondImageBase64: mealModalState.secondPhotoBase64,
+    secondImageMimeType: 'image/jpeg',
   });
 
   if (!document.getElementById('mealRefineArea')) return;
@@ -2779,11 +2869,7 @@ async function handleMealRefineSubmitted() {
     return;
   }
 
-  const areaHTML = mealModalState.photoDataUrl
-    ? `<img src="${mealModalState.photoDataUrl}" class="w-full rounded-lg mb-2" style="max-height: 160px; object-fit: cover;" alt="Photo of the meal">`
-    : '';
-
-  applyMealEstimateToForm(result.estimate, { areaHTML, hasPhoto: !!mealModalState.photoDataUrl, sourceLabel: 'after your correction' });
+  applyMealEstimateToForm(result.estimate, { areaHTML: buildMealPhotoPreviewHTML(), hasPhoto: !!mealModalState.photoDataUrl, sourceLabel: 'after your correction' });
 }
 
 function saveMealFromModal() {

@@ -54,18 +54,25 @@ function hasOpenRouterKey() {
 
 /**
  * Same call shape as GeminiClient.callGemini: systemInstruction + prompt,
- * optional inline image, optional jsonMode. Returns the same
+ * optional inline image(s), optional jsonMode. Returns the same
  * { ok: true, text } / { ok: true, data } / { ok: false, error } shape.
+ *
+ * images: optional array of { imageBase64, imageMimeType }, mirrors
+ * GeminiClient.callGemini's multi-photo support (e.g. a second angle for
+ * depth). imageBase64/imageMimeType (singular) still works for existing
+ * single-image callers; images (plural) wins if both are supplied.
  */
-async function callOpenRouter({ systemInstruction, prompt, jsonMode = false, imageBase64 = null, imageMimeType = null }) {
+async function callOpenRouter({ systemInstruction, prompt, jsonMode = false, imageBase64 = null, imageMimeType = null, images = null }) {
   const key = getOpenRouterKey();
   if (!key) return { ok: false, error: 'missing_key' };
 
   const userContent = [{ type: 'text', text: prompt }];
-  if (imageBase64) {
+  const imageList = images && images.length ? images : (imageBase64 ? [{ imageBase64, imageMimeType }] : []);
+  for (const img of imageList) {
+    if (!img || !img.imageBase64) continue;
     userContent.push({
       type: 'image_url',
-      image_url: { url: `data:${imageMimeType || 'image/jpeg'};base64,${imageBase64}` },
+      image_url: { url: `data:${img.imageMimeType || 'image/jpeg'};base64,${img.imageBase64}` },
     });
   }
 

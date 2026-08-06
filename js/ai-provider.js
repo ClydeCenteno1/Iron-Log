@@ -55,11 +55,16 @@ function callProvider(providerId, params) {
 const inFlightCalls = new Map();
 
 function requestSignature(params) {
+  const imageList = params.images && params.images.length
+    ? params.images
+    : (params.imageBase64 ? [{ imageBase64: params.imageBase64 }] : []);
   return JSON.stringify({
     s: params.systemInstruction,
     p: params.prompt,
     j: params.jsonMode || false,
-    i: params.imageBase64 ? params.imageBase64.length : 0,
+    // Lengths only (never the actual image bytes) — enough to distinguish
+    // different photos without bloating the signature string.
+    i: imageList.map(img => img && img.imageBase64 ? img.imageBase64.length : 0),
   });
 }
 
