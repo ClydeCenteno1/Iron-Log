@@ -89,4 +89,77 @@ Write a short (2-3 sentence) note explaining this observation and the optional s
   return { ok: true, text: result.text.trim() };
 }
 
-window.CoachNarration = { narrateCoachingFeedback, narratePostWorkoutSummary, narrateWeightTrend };
+/**
+ * Batched sibling of narrateCoachingFeedback: writes the short coaching
+ * note for every exercise currently in the session in one API call
+ * instead of one call per exercise. This is the main quota risk in the
+ * log-session screen — it used to auto-fire a separate call per entry on
+ * every render (content-cached, but every *new* combo still meant a fresh
+ * call). Same per-exercise prompt inputs go in; the model still writes
+ * each note independently against its own decision/target, it's just
+ * delivered as one request/response instead of many.
+ *
+ * items: [{ key, exerciseName, suggestion, profile }] — profile is passed
+ * per-item for API symmetry with the single version, but in practice is
+ * the same object for every item in a session.
+ * Returns: { ok, notes: { [key]: string } } — missing keys on partial
+ * failure just mean "no note for that one", callers already fall back to
+ * suggestion.message when a note isn't available.
+ */
+async function narrateCoachingFeedbackBatch(items) {
+  if (!AIProvider.hasAnyKey()) {
+    return { ok: false, error: 'missing_key' };
+  }
+  if (!items || items.length === 0) {
+    return { ok: true, notes: {} };
+  }
+  if (items.length === 1) {
+    const only = items[0];
+    const single = await narrateCoachingFeedback({ exerciseName: only.exerciseName, suggestion: only.suggestion, profile: only.profile });
+    return single.ok ? { ok: true, notes: { [only.key]: single.text } } : { ok: false, error: single.error };
+  }
+
+  const systemInstruction = `You are a supportive, no-nonsense strength coach texting a client quick notes after each lift in their session.
+For each exercise below you are given the ALREADY-DECIDED numeric target — you must not change or second-guess these numbers, only explain each one naturally in 1-2 short sentences.
+Write each exercise's note independently — don't let one exercise's note reference or blend with another's.
+Rely on established training principles; don't invent claims. Keep each note brief, direct, and encouraging without being cheesy.
+Return ONLY valid JSON, no prose, no markdown fences.`;
+
+  const blocks = items.map((item, i) => {
+    const s = item.suggestion;
+    return `--- Exercise ${i + 1}: key="${item.key}" ---
+Name: ${item.exerciseName}
+Decision: ${s.status} (${s.classification || 'n/a'})
+Fixed target for next session: ${s.suggestedWeight !== null ? s.suggestedWeight + 'kg' : 'n/a'}, ${s.suggestedReps} reps, ${s.suggestedSets} sets.
+Training goal: ${item.profile.goal}, experience: ${item.profile.experienceLevel}.`;
+  }).join('\n\n');
+
+  const prompt = `Write a 1-2 sentence coaching note for each of the following ${items.length} exercises, explaining its fixed target. Do not restate raw numbers mechanically — talk like a coach would.
+
+${blocks}
+
+Return JSON in exactly this shape, with one entry per exercise keyed by its exact key string given above:
+{
+  "notes": {
+    "<key>": "1-2 sentence coaching note"
+  }
+}`;
+
+  const result = await AIProvider.callAI({ systemInstruction, prompt, jsonMode: true });
+  if (!result.ok) return { ok: false, error: result.error };
+
+  const data = result.data;
+  const notesRaw = data && typeof data === 'object' ? data.notes : null;
+  if (!notesRaw || typeof notesRaw !== 'object') {
+    return { ok: false, error: 'AI returned an unexpected notes shape.' };
+  }
+
+  const notes = {};
+  for (const item of items) {
+    const text = notesRaw[item.key];
+    if (typeof text === 'string' && text.trim()) notes[item.key] = text.trim();
+  }
+  return { ok: true, notes };
+}
+
+window.CoachNarration = { narrateCoachingFeedback, narrateCoachingFeedbackBatch, narratePostWorkoutSummary, narrateWeightTrend };

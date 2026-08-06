@@ -343,23 +343,40 @@ async function acceptRepeatProgramOverload() {
   const session = Storage.getActiveSession();
   const styleKey = (session && session.trainingStyle) || profile.trainingStyle;
 
-  const results = [];
-  for (const ex of day.exercises) {
+  // Build rules baselines (cheap, local) plus the exercise metadata needed
+  // for one batched AI call — this used to be one AI call per exercise in
+  // this loop, which for a 5-6 exercise day could burn through a free-tier
+  // quota before a single set was logged. Now it's a single request that
+  // reviews every exercise in the day at once.
+  const exerciseInfos = day.exercises.map(ex => {
     const exInfo = exercisesLib.find(x => x.id === ex.exerciseId);
-    const name = exInfo ? exInfo.name : ex.name || 'Exercise';
-    const baseline = Progression.suggestNextTarget({ exerciseId: ex.exerciseId, styleKey });
+    return {
+      exerciseId: ex.exerciseId,
+      exerciseName: exInfo ? exInfo.name : ex.name || 'Exercise',
+      exerciseEquipment: exInfo ? exInfo.equipment : null,
+      exerciseCues: exInfo ? exInfo.cues : null,
+    };
+  });
 
-    let aiResult = null;
-    if (AIProvider.hasAnyKey()) {
-      aiResult = await Progression.suggestNextTargetAI({
-        exerciseId: ex.exerciseId,
-        exerciseName: name,
-        styleKey,
-        profile,
-      });
-    }
-    results.push({ name, baseline, ai: aiResult && aiResult.ok ? aiResult.suggestion : null });
+  const baselines = {};
+  exerciseInfos.forEach(info => {
+    baselines[info.exerciseId] = Progression.suggestNextTarget({ exerciseId: info.exerciseId, styleKey });
+  });
+
+  let aiResults = {};
+  if (AIProvider.hasAnyKey()) {
+    const batch = await Progression.suggestNextTargetsAIBatch({ exerciseList: exerciseInfos, styleKey, profile });
+    aiResults = batch.results || {};
   }
+
+  const results = exerciseInfos.map(info => {
+    const aiResult = aiResults[info.exerciseId];
+    return {
+      name: info.exerciseName,
+      baseline: baselines[info.exerciseId],
+      ai: aiResult && aiResult.ok ? aiResult.suggestion : null,
+    };
+  });
 
   showRepeatOverloadResults(results, continueCallback);
 }
@@ -1007,7 +1024,13 @@ function renderLogSession() {
 
   if (AIProvider.hasAnyKey()) {
     const profile = Storage.getProfile();
-    session.entries.forEach(async (entry, entryIdx) => {
+
+    // Figure out which entries actually need a fresh AI note (i.e. aren't
+    // already sitting in the content-cache for their current cache key),
+    // and batch ONLY those into a single call — this used to be one call
+    // per entry, every time, regardless of how many were already cached.
+    const pending = [];
+    session.entries.forEach((entry, entryIdx) => {
       const ex = exercises.find(x => x.id === entry.exerciseId);
       const suggestion = Progression.suggestNextTarget({ exerciseId: entry.exerciseId, styleKey: session.trainingStyle });
 
@@ -1026,14 +1049,23 @@ function renderLogSession() {
         return;
       }
 
-      const narration = await CoachNarration.narrateCoachingFeedback({ exerciseName: ex ? ex.name : 'exercise', suggestion, profile });
-      if (logSessionRenderGen !== thisGen) return; // view changed underneath this call — discard
-      if (!narration.ok) return;
-
-      coachNoteCache[cacheKey] = narration.text;
-      const liveEl = document.getElementById(`coachNote-${entryIdx}`);
-      if (liveEl) liveEl.textContent = narration.text;
+      pending.push({ key: cacheKey, entryIdx, exerciseName: ex ? ex.name : 'exercise', suggestion, profile });
     });
+
+    if (pending.length > 0) {
+      CoachNarration.narrateCoachingFeedbackBatch(pending).then(result => {
+        if (logSessionRenderGen !== thisGen) return; // view changed underneath this call — discard
+        if (!result.ok) return;
+
+        pending.forEach(item => {
+          const text = result.notes[item.key];
+          if (!text) return; // this one wasn't returned — entry keeps its rules-engine message
+          coachNoteCache[item.key] = text;
+          const liveEl = document.getElementById(`coachNote-${item.entryIdx}`);
+          if (liveEl) liveEl.textContent = text;
+        });
+      });
+    }
   }
 }
 
@@ -1059,6 +1091,8 @@ async function requestAIOverload(entryIdx, exerciseId) {
   const result = await Progression.suggestNextTargetAI({
     exerciseId,
     exerciseName: ex ? ex.name : 'exercise',
+    exerciseEquipment: ex ? ex.equipment : null,
+    exerciseCues: ex ? ex.cues : null,
     styleKey: session.trainingStyle,
     profile,
   });
