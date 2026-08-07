@@ -77,6 +77,9 @@
   @media (hover: hover) { .blob-card:hover { box-shadow: var(--shadow); } }
   .blob-card-suggest { background: color-mix(in srgb, var(--accent-suggest) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-suggest) 28%, transparent); }
   .blob-card-logged  { background: color-mix(in srgb, var(--accent-logged) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent-logged) 28%, transparent); }
+  /* Neutral variant for blob-card usage outside the AI/logged distinction (e.g.
+     library entries) — same rounded/soft shape as the reference, no red/blue tint. */
+  .blob-card-neutral { background: var(--card); border: 1px solid var(--border); }
 
   /* Rounded pill segmented-control, echoing the reference screens' "All / Running / Cycling" pills */
   .pill-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
@@ -328,6 +331,14 @@
           <button class="pill" onclick="Nav.go('history')">History</button>
           <button class="pill" onclick="Nav.go('programs')">My programs</button>
         </div>
+        <!-- Restores the context the old 2x2 button grid gave for free under each
+             label (round 3 dropped it when the grid became a pill row). A legend
+             under the row rather than per-pill subtext, since pills are compact
+             single-line tap targets by design — putting a second line under each
+             one would defeat the point of the row being more compact than the grid. -->
+        <p class="text-xs px-1" style="color: var(--text-muted);">
+          Generate plan: AI or rules-based · Build my own: no AI, your exercises · My programs: saved plans
+        </p>
 
         <div class="card p-4" style="border-radius: 24px;">
           <p class="font-display font-semibold text-sm mb-3">Recent lifts</p>

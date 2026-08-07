@@ -394,10 +394,38 @@ async function acceptRepeatProgramOverload() {
     baselines[info.exerciseId] = Progression.suggestNextTarget({ exerciseId: info.exerciseId, styleKey });
   });
 
-  let aiResults = {};
-  if (AIProvider.hasAnyKey()) {
-    const batch = await Progression.suggestNextTargetsAIBatch({ exerciseList: exerciseInfos, styleKey, profile });
-    aiResults = batch.results || {};
+  // Cache key per exercise mirrors renderLogSession's coachNote key: the
+  // rules-engine decision plus goal/experience is what actually drives the
+  // AI's reasoning here, so as long as those haven't changed since the last
+  // review, re-fetching would just re-spend a call for the same answer.
+  // Persisted (not just in-memory) since this modal is a one-shot flow that
+  // doesn't stay mounted between visits the way the log-session screen does.
+  const cacheKeyFor = (info) => {
+    const b = baselines[info.exerciseId];
+    return `overloadReview:${info.exerciseId}:${b.status}:${b.classification}:${b.suggestedWeight}:${b.suggestedReps}:${b.suggestedSets}:${profile.goal}:${profile.experienceLevel}`;
+  };
+
+  const aiResults = {};
+  const pendingInfos = [];
+  exerciseInfos.forEach(info => {
+    const cached = Storage.getAICacheEntry(cacheKeyFor(info));
+    if (cached) {
+      aiResults[info.exerciseId] = { ok: true, suggestion: cached };
+    } else {
+      pendingInfos.push(info);
+    }
+  });
+
+  if (pendingInfos.length > 0 && AIProvider.hasAnyKey()) {
+    const batch = await Progression.suggestNextTargetsAIBatch({ exerciseList: pendingInfos, styleKey, profile });
+    const freshResults = batch.results || {};
+    pendingInfos.forEach(info => {
+      const r = freshResults[info.exerciseId];
+      if (r && r.ok) {
+        aiResults[info.exerciseId] = r;
+        Storage.setAICacheEntry(cacheKeyFor(info), r.suggestion);
+      }
+    });
   }
 
   const results = exerciseInfos.map(info => {
@@ -451,7 +479,7 @@ function renderPrograms() {
   const plans = [...Storage.getPlans()].sort((a, b) => b.createdAt - a.createdAt);
 
   if (plans.length === 0) {
-    el.innerHTML = `<div class="card p-6 text-center"><p class="text-sm" style="color: var(--text-muted);">No saved programs yet. Generate one to see it here.</p></div>`;
+    el.innerHTML = `<div class="blob-card blob-card-neutral p-6 text-center"><p class="text-sm" style="color: var(--text-muted);">No saved programs yet. Generate one to see it here.</p></div>`;
     return;
   }
 
@@ -460,13 +488,14 @@ function renderPrograms() {
 
   el.innerHTML = plans.map(plan => {
     const priorSessions = getSessionsForPlan(plan, allSessions);
+    const cardClass = plan.source === 'manual' ? 'blob-card-neutral' : 'blob-card-suggest';
     return `
-    <div class="card p-4">
+    <div class="blob-card ${cardClass} p-4">
       <div class="flex items-center justify-between mb-1">
         <p class="font-display font-semibold">${plan.splitLabel || plan.splitKey}</p>
-        ${plan.active ? '<span class="text-xs" style="color: var(--accent-logged);">Active</span>' : ''}
+        ${plan.active ? '<span class="text-xs tag-logged">Active</span>' : ''}
       </div>
-      <p class="text-xs mb-3" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')} &middot; ${new Date(plan.createdAt).toLocaleDateString()}</p>
+      <p class="text-xs mb-3" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${(plan.goal || '').replace('_',' ')} &middot; ${new Date(plan.createdAt).toLocaleDateString()} ${plan.source === 'manual' ? '&middot; Built by you' : '&middot; AI-generated'}</p>
       <div class="flex gap-2 mb-3">
         ${!plan.active ? `<button class="btn-secondary py-2 px-3 text-xs flex-1" onclick="setActiveProgram('${plan.id}')">Set active</button>` : ''}
         ${plan.source === 'manual' ? `<button class="btn-secondary py-2 px-3 text-xs flex-1" onclick="editManualProgram('${plan.id}')">Edit</button>` : ''}
@@ -698,7 +727,7 @@ async function finishGeneratorQuestionnaire() {
   if (!result.ok) {
     if (result.error === 'missing_key') { promptForGeminiKey(() => finishGeneratorQuestionnaire()); return; }
     el.innerHTML = `
-      <div class="card p-4 space-y-3">
+      <div class="blob-card blob-card-neutral p-4 space-y-3">
         <p class="text-sm tag-suggest">AI generation failed: ${result.error}</p>
         <button class="btn-secondary w-full" onclick="finishGeneratorQuestionnaire()">Retry with AI</button>
         <button class="btn-primary w-full" onclick="useRulesFallback()">Use rules-based plan instead</button>
@@ -720,7 +749,7 @@ function renderGeneratedPlan(plan) {
   const el = document.getElementById('generatorStep');
   el.innerHTML = `
     <div class="space-y-3">
-      <div class="card p-4">
+      <div class="blob-card blob-card-suggest p-4">
         <p class="font-display font-bold text-lg">${escapeHTML(plan.splitLabel)}</p>
         <p class="text-sm" style="color: var(--text-muted);">${plan.daysPerWeek} days/week &middot; ${escapeHTML(plan.goal.replace('_',' '))}</p>
         ${plan.coachNote ? `<p class="text-xs mt-2 tag-logged">${escapeHTML(plan.coachNote)}</p>` : ''}
@@ -728,7 +757,7 @@ function renderGeneratedPlan(plan) {
         ${plan.warnings.length ? `<p class="text-xs mt-2 tag-suggest">${escapeHTML(plan.warnings.join(' '))}</p>` : ''}
       </div>
       ${plan.days.map(day => `
-        <div class="card p-4">
+        <div class="blob-card blob-card-suggest p-4">
           <p class="font-display font-semibold mb-2">Day ${day.dayNumber}: ${escapeHTML(day.focus)}</p>
           <div class="space-y-1.5">
             ${day.exercises.map(ex => `
@@ -987,7 +1016,7 @@ function renderLogSession() {
 
   if (session.entries.length === 0) {
     container.innerHTML = `
-      <div class="card p-6 text-center">
+      <div class="blob-card blob-card-neutral p-6 text-center">
         <p class="text-sm" style="color: var(--text-muted);">No exercises added yet. Tap "Add exercise" below to start logging.</p>
       </div>`;
     return;
@@ -1000,7 +1029,7 @@ function renderLogSession() {
     const prevSets = lastLogged ? lastLogged.entry.sets.filter(s => !s.isWarmup) : [];
 
     return `
-      <div class="card p-4">
+      <div class="blob-card blob-card-neutral p-4">
         <div class="flex items-center justify-between mb-2">
           <p class="font-display font-semibold">${escapeHTML(ex ? ex.name : 'Exercise')}</p>
           <button class="text-xs" style="color: var(--text-muted);" onclick="removeExerciseFromSession(${entryIdx})">Remove</button>
@@ -1074,7 +1103,15 @@ function renderLogSession() {
       const cacheKey = `${entry.exerciseId}:${suggestion.status}:${suggestion.classification}:${suggestion.suggestedWeight}:${suggestion.suggestedReps}:${suggestion.suggestedSets}:${profile.goal}:${profile.experienceLevel}`;
       const noteEl = document.getElementById(`coachNote-${entryIdx}`);
 
-      const cached = coachNoteCache[cacheKey];
+      // Check the in-memory cache first (cheap, no JSON round-trip), then
+      // the localStorage-backed cache (survives a reload — this is what
+      // used to be missing: a fresh page load re-spent a call on notes
+      // that hadn't actually changed since last time).
+      let cached = coachNoteCache[cacheKey];
+      if (!cached) {
+        cached = Storage.getAICacheEntry(`coachNote:${cacheKey}`);
+        if (cached) coachNoteCache[cacheKey] = cached; // warm the in-memory cache too
+      }
       if (cached) {
         if (noteEl) noteEl.textContent = cached;
         return;
@@ -1092,6 +1129,7 @@ function renderLogSession() {
           const text = result.notes[item.key];
           if (!text) return; // this one wasn't returned — entry keeps its rules-engine message
           coachNoteCache[item.key] = text;
+          Storage.setAICacheEntry(`coachNote:${item.key}`, text);
           const liveEl = document.getElementById(`coachNote-${item.entryIdx}`);
           if (liveEl) liveEl.textContent = text;
         });
@@ -1369,14 +1407,14 @@ function renderHistory() {
   const el = document.getElementById('historyContent');
 
   if (sessions.length === 0) {
-    el.innerHTML = `<div class="card p-6 text-center text-sm" style="color: var(--text-muted);">No sessions yet. Your history will build up here.</div>`;
+    el.innerHTML = `<div class="blob-card blob-card-neutral p-6 text-center text-sm" style="color: var(--text-muted);">No sessions yet. Your history will build up here.</div>`;
     return;
   }
 
   el.innerHTML = sessions.map(s => {
     const dateLabel = new Date(s.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     return `
-      <div class="card p-4">
+      <div class="blob-card blob-card-logged p-4">
         <p class="font-display font-semibold text-sm mb-2">${dateLabel}</p>
         <div class="space-y-1.5">
           ${s.entries.map(entry => {
@@ -1416,10 +1454,13 @@ function renderLibrary() {
       <p class="text-xs uppercase tracking-wide mb-1.5 mt-3" style="color: var(--text-muted);">${escapeHTML(group)}</p>
       <div class="space-y-1.5">
         ${groups[group].map(ex => `
-          <div class="card p-3">
+          <div class="blob-card blob-card-neutral p-3">
             <div class="flex items-center justify-between">
               <p class="text-sm font-medium">${escapeHTML(ex.name)}</p>
-              <span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--bg-elevated); color: var(--text-muted);">${escapeHTML(ex.equipment)}</span>
+              <span class="flex items-center gap-1.5">
+                ${ex.isCustom ? `<span class="text-xs px-2 py-0.5 rounded-full tag-logged" style="background: color-mix(in srgb, var(--accent-logged) 14%, transparent);">Custom</span>` : ''}
+                <span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--bg-elevated); color: var(--text-muted);">${escapeHTML(ex.equipment)}</span>
+              </span>
             </div>
             ${ex.cues ? `<p class="text-xs mt-1" style="color: var(--text-muted);">${escapeHTML(ex.cues)}</p>` : ''}
           </div>
@@ -1617,11 +1658,11 @@ let chatSendInFlight = false; // prevents overlapping sendChatMessage() calls fr
 function renderChatView() {
   const el = document.getElementById('chatMessages');
   if (chatHistory.length === 0) {
-    el.innerHTML = `<div class="card p-4 text-sm" style="color: var(--text-muted);">Ask about training, recovery, or nutrition. Answers are grounded in your logged workouts and profile where relevant — not a substitute for medical advice.</div>`;
+    el.innerHTML = `<div class="blob-card blob-card-neutral p-4 text-sm" style="color: var(--text-muted);">Ask about training, recovery, or nutrition. Answers are grounded in your logged workouts and profile where relevant — not a substitute for medical advice.</div>`;
   } else {
     el.innerHTML = chatHistory.map(m => `
       <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
-        <div class="card p-3 max-w-[85%] text-sm" style="${m.role === 'user' ? 'background: var(--accent-logged); color: #0E0F12; border: none;' : ''}">
+        <div class="blob-card ${m.role === 'user' ? '' : 'blob-card-suggest'} p-3 max-w-[85%] text-sm" style="${m.role === 'user' ? 'background: var(--accent-logged); color: #0E0F12; border: none;' : ''}">
           ${m.role === 'user' ? escapeHTML(m.text) : renderChatMarkdown(m.text)}
           ${m.failed ? `<div class="flex gap-2 mt-2">
             <button class="btn-secondary text-xs px-2 py-1" onclick="retryLastChatMessage()">Retry</button>
@@ -1756,7 +1797,7 @@ function renderNutritionProfileForm() {
         </select>
         <p class="text-xs mt-1" style="color: var(--text-muted);">Set automatically when you use "Set a goal" below — changeable here directly too.</p>
       </div>
-      <div class="card p-3 space-y-2" style="background: var(--bg-elevated);">
+      <div class="blob-card blob-card-neutral p-3 space-y-2">
         ${profile.goalWeightKg ? `
           <p class="text-sm font-medium">${escapeHTML(Nutrition.GOAL_INTENTS[profile.goalIntent]?.label || 'Goal weight set')}</p>
           <p class="text-xs" style="color: var(--text-muted);">Target: ${profile.goalWeightKg}kg</p>
@@ -2230,7 +2271,7 @@ function renderNutrition() {
 
   if (!Nutrition.hasCompleteProfileForCalc(profile) || nutritionProfile.calorieTarget == null) {
     container.innerHTML = `
-      <div class="card p-6 text-center space-y-3">
+      <div class="blob-card blob-card-neutral p-6 text-center space-y-3">
         <p class="font-display text-lg font-semibold">Set up your targets</p>
         <p class="text-sm" style="color: var(--text-muted);">A few basics (age, sex, weight, height) let us estimate a daily calorie and macro range to track against.</p>
         <button class="btn-primary" onclick="Nav.go('nutritionProfile')">Set up nutrition</button>
@@ -2259,7 +2300,7 @@ function renderNutrition() {
     </div>`;
 
   container.innerHTML = `
-    <div class="card p-4 space-y-3">
+    <div class="blob-card blob-card-logged p-4 space-y-3">
       <div class="flex items-center justify-between">
         <span class="text-sm" style="color: var(--text-muted);">Today</span>
         <span class="text-sm font-mono">${Math.round(totals.calories)} / ${nutritionProfile.calorieTarget} kcal</span>
@@ -2287,7 +2328,7 @@ function renderNutrition() {
       Log My Day
     </button>
 
-    <div class="card p-4">
+    <div class="blob-card blob-card-neutral p-4">
       <p class="font-display font-semibold text-sm mb-3">Today's meals</p>
       <div id="todaysMealsList" class="space-y-2">
         ${todaysMeals.length === 0
@@ -2295,7 +2336,7 @@ function renderNutrition() {
           : todaysMeals.map(m => `
             <div class="flex items-center justify-between py-2 border-b" style="border-color: var(--border);">
               <div>
-                <p class="text-sm font-medium">${escapeHTML(m.label || m.category)}</p>
+                <p class="text-sm font-medium">${escapeHTML(m.label || m.category)} ${m.source && m.source.startsWith('ai') ? '<span class="tag-suggest">✨</span>' : ''}</p>
                 <p class="text-xs" style="color: var(--text-muted);">${escapeHTML(m.category)}${m.estimateRange ? ` · estimated ${m.estimateRange.caloriesLow}–${m.estimateRange.caloriesHigh} kcal` : ''}</p>
               </div>
               <div class="text-right">
@@ -2451,7 +2492,7 @@ function renderWeightTrackerCard() {
   const displayWeight = (kg) => settings.units === 'lb' ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
 
   return `
-    <div class="card p-4 space-y-3">
+    <div class="blob-card blob-card-logged p-4 space-y-3">
       <div class="flex items-center justify-between">
         <p class="font-display font-semibold text-sm">Weight</p>
         <span class="text-xs" style="color: var(--text-muted);">${logs.length ? `Last: ${displayWeight(logs[logs.length - 1].weightKg)}${unitLabel}` : 'No check-ins yet'}</span>
@@ -2520,7 +2561,7 @@ function renderWeightTrendCard() {
     : `You're trending ${displayDelta(trend.actualWeeklyKg)} against an expected ${displayDelta(trend.expectedWeeklyKg)} for your ${trend.goalKey} goal. A target closer to ${trend.suggestedCalorieTarget} kcal (${trend.suggestedDelta > 0 ? '+' : ''}${trend.suggestedDelta} kcal) is one option if this trend continues.`;
 
   container.innerHTML = `
-    <div class="card p-4 space-y-2 border-l-4" style="border-left-color: var(--accent-warn);">
+    <div class="blob-card blob-card-suggest p-4 space-y-2 border-l-4" style="border-left-color: var(--accent-warn);">
       <p class="font-display font-semibold text-sm">Trend check</p>
       <p class="text-sm" id="weightTrendMessage" style="color: var(--text-muted);">${escapeHTML(fallbackMessage)}</p>
       <div class="flex gap-2 pt-1">

@@ -21,6 +21,15 @@
    ============================================================ */
 
 const AI_PRIMARY_PROVIDER_STORAGE = 'ft_ai_primary_provider';
+// Cross-provider fallback (retrying on the OTHER provider after the primary
+// key is present but the call itself failed — quota/timeout/network) is
+// opt-out, not mandatory. It's on by default, but every fallback attempt
+// spends real requests against the secondary provider's own limit, so a
+// person who has hit their primary's quota and then keeps retrying can burn
+// through the secondary's free-tier limit too without ever "choosing" to use
+// it. Missing-key fallback (primary has no key at all) is unaffected by this
+// setting — that path only ever runs the secondary once, not repeatedly.
+const AI_AUTO_FALLBACK_STORAGE = 'ft_ai_auto_fallback';
 const AI_PROVIDERS = {
   gemini: { label: 'Gemini', client: () => GeminiClient, other: 'openrouter', otherLabel: 'OpenRouter' },
   openrouter: { label: 'OpenRouter', client: () => OpenRouterClient, other: 'gemini', otherLabel: 'Gemini' },
@@ -34,6 +43,15 @@ function getPrimaryProvider() {
 function setPrimaryProvider(providerId) {
   if (!AI_PROVIDERS[providerId]) return;
   localStorage.setItem(AI_PRIMARY_PROVIDER_STORAGE, providerId);
+}
+
+function getAutoFallbackEnabled() {
+  const stored = localStorage.getItem(AI_AUTO_FALLBACK_STORAGE);
+  return stored === null ? true : stored === 'true';
+}
+
+function setAutoFallbackEnabled(enabled) {
+  localStorage.setItem(AI_AUTO_FALLBACK_STORAGE, enabled ? 'true' : 'false');
 }
 
 function providerHasKey(providerId) {
@@ -110,6 +128,16 @@ async function callAIUncached(params) {
     return { ok: false, error: `${AI_PROVIDERS[primaryId].label}: ${primaryResult.error}` };
   }
 
+  if (!getAutoFallbackEnabled()) {
+    // Person has turned off auto-fallback (Settings), most likely to keep
+    // the secondary's own quota untouched. Say so plainly rather than
+    // silently behaving like there's no fallback configured at all.
+    return {
+      ok: false,
+      error: `${AI_PROVIDERS[primaryId].label}: ${primaryResult.error} (Automatic fallback to ${AI_PROVIDERS[secondaryId].label} is turned off in Settings.)`,
+    };
+  }
+
   const fallbackResult = await callProvider(secondaryId, params);
   if (fallbackResult.ok) {
     notifyProviderSwitch(primaryId, secondaryId);
@@ -148,4 +176,4 @@ function hasAnyKey() {
   return GeminiClient.hasGeminiKey() || OpenRouterClient.hasOpenRouterKey();
 }
 
-window.AIProvider = { callAI, hasAnyKey, getPrimaryProvider, setPrimaryProvider, AI_PROVIDERS };
+window.AIProvider = { callAI, hasAnyKey, getPrimaryProvider, setPrimaryProvider, getAutoFallbackEnabled, setAutoFallbackEnabled, AI_PROVIDERS };

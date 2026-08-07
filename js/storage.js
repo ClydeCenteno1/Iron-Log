@@ -21,6 +21,7 @@ const Keys = {
   NUTRITION: STORAGE_PREFIX + 'nutrition',     // BMR/TDEE inputs + calculated calorie/macro targets
   SETTINGS: STORAGE_PREFIX + 'settings',       // theme, units, misc UI prefs
   META: STORAGE_PREFIX + 'meta',               // schema version tracking
+  AI_CACHE: STORAGE_PREFIX + 'ai_cache',        // persisted AI-response cache, keyed by call signature
 };
 
 function readJSON(key, fallback) {
@@ -394,6 +395,59 @@ function saveNutritionProfile(nutrition) {
   return merged;
 }
 
+/* ---------------- AI response cache (persisted) ----------------
+   Generic key->value cache for AI-narration/suggestion results that are
+   expensive (quota-wise) to regenerate but cheap to store, keyed by
+   whatever cache-key string the caller already derives from the inputs
+   that actually change the answer (exercise+decision+profile, etc.) —
+   this file doesn't know or care what's inside `value`.
+
+   Two things keep this from growing without bound in localStorage:
+   - TTL: entries older than maxAgeMs are treated as absent on read, so
+     a stale AI cache never keeps serving a months-old note forever.
+   - Count cap: on write, if the store exceeds MAX_ENTRIES, the oldest
+     entries (by savedAt) are evicted first. This is a cache, not a log —
+     unbounded growth here would just be dead weight in localStorage.
+   Callers still keep their own in-memory cache for the current session
+   (e.g. app.js's coachNoteCache) since that's cheaper than round-tripping
+   through JSON on every render; this layer is what survives a reload. */
+
+const AI_CACHE_MAX_ENTRIES = 300;
+const AI_CACHE_DEFAULT_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
+
+function getAICacheStore() {
+  return readJSON(Keys.AI_CACHE, {});
+}
+
+function getAICacheEntry(cacheKey, maxAgeMs = AI_CACHE_DEFAULT_MAX_AGE_MS) {
+  const store = getAICacheStore();
+  const entry = store[cacheKey];
+  if (!entry) return null;
+  if (Date.now() - entry.savedAt > maxAgeMs) return null;
+  return entry.value;
+}
+
+function setAICacheEntry(cacheKey, value) {
+  const store = getAICacheStore();
+  store[cacheKey] = { value, savedAt: Date.now() };
+
+  const keys = Object.keys(store);
+  if (keys.length > AI_CACHE_MAX_ENTRIES) {
+    keys
+      .sort((a, b) => store[a].savedAt - store[b].savedAt)
+      .slice(0, keys.length - AI_CACHE_MAX_ENTRIES)
+      .forEach(k => delete store[k]);
+  }
+
+  writeJSON(Keys.AI_CACHE, store);
+}
+
+// For a screen-scoped "review is stale, start over" affordance rather than
+// waiting out the TTL — not currently wired to any UI, available for that.
+function clearAICache() {
+  writeJSON(Keys.AI_CACHE, {});
+}
+
 window.Storage = {
   Keys, uid, runMigrations,
   getExercises, saveExercises, addExercise,
@@ -405,4 +459,5 @@ window.Storage = {
   getMeals, saveMeals, addMeal, updateMeal, deleteMeal, getMealsForDate,
   getWeightLogs, saveWeightLogs, addWeightLog, deleteWeightLog, getRecentWeightLogs,
   getNutritionProfile, saveNutritionProfile,
+  getAICacheEntry, setAICacheEntry, clearAICache,
 };
