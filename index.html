@@ -330,6 +330,7 @@
           <button class="pill" onclick="Nav.go('manualBuilder')">Build my own</button>
           <button class="pill" onclick="Nav.go('history')">History</button>
           <button class="pill" onclick="Nav.go('programs')">My programs</button>
+          <button class="pill" onclick="Nav.go('onerepmax')">1RM &amp; PR Day</button>
         </div>
         <!-- Restores the context the old 2x2 button grid gave for free under each
              label (round 3 dropped it when the grid became a pill row). A legend
@@ -337,7 +338,7 @@
              single-line tap targets by design — putting a second line under each
              one would defeat the point of the row being more compact than the grid. -->
         <p class="text-xs px-1" style="color: var(--text-muted);">
-          Generate plan: AI or rules-based · Build my own: no AI, your exercises · My programs: saved plans
+          Generate plan: AI or rules-based · Build my own: no AI, your exercises · My programs: saved plans · 1RM & PR Day: max calculator & attempt planner
         </p>
 
         <div class="card p-4" style="border-radius: 24px;">
@@ -388,7 +389,21 @@
     <section id="view-history" class="view space-y-4">
       <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
       <h2 class="font-display text-xl font-bold">History</h2>
+      <button class="pill" onclick="Nav.go('onerepmax')">1RM &amp; PR Day →</button>
       <div id="historyContent" class="space-y-3"></div>
+    </section>
+
+    <!-- ===================== ONE-REP MAX / PR DAY VIEW ===================== -->
+    <section id="view-onerepmax" class="view space-y-4">
+      <button class="text-sm" style="color: var(--text-muted);" onclick="Nav.go('dashboard')">&larr; Back</button>
+      <h2 class="font-display text-xl font-bold">1RM &amp; PR Day</h2>
+      <p class="text-sm" style="color: var(--text-muted);">Estimate your one-rep max from a normal working set, or plan a safe attempt at a real one.</p>
+      <div class="pill-row pb-1">
+        <button class="pill pill-active" data-ormtab="calculator" onclick="switchOneRMTab('calculator')">Calculator</button>
+        <button class="pill" data-ormtab="translate" onclick="switchOneRMTab('translate')">Translate to other lifts</button>
+        <button class="pill" data-ormtab="prday" onclick="switchOneRMTab('prday')">PR Day planner</button>
+      </div>
+      <div id="onerepmaxContent" class="space-y-4"></div>
     </section>
 
     <!-- ===================== EXERCISE LIBRARY VIEW ===================== -->
@@ -545,6 +560,7 @@
   <script src="js/themes.js"></script>
   <script src="js/exercise-seed.js"></script>
   <script src="js/progression.js"></script>
+  <script src="js/one-rep-max.js"></script>
   <script src="js/nutrition.js"></script>
   <script src="js/generator.js"></script>
   <script src="js/gemini-client.js"></script>

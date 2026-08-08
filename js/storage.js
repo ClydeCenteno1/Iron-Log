@@ -22,6 +22,7 @@ const Keys = {
   SETTINGS: STORAGE_PREFIX + 'settings',       // theme, units, misc UI prefs
   META: STORAGE_PREFIX + 'meta',               // schema version tracking
   AI_CACHE: STORAGE_PREFIX + 'ai_cache',        // persisted AI-response cache, keyed by call signature
+  ONE_RM_LOGS: STORAGE_PREFIX + 'one_rm_logs',  // estimated/tested 1RM history per exercise
 };
 
 function readJSON(key, fallback) {
@@ -395,6 +396,55 @@ function saveNutritionProfile(nutrition) {
   return merged;
 }
 
+/* ---------------- One-rep max log (estimates + tested PRs) ----------------
+   One record per save. Kept as a running history (not just "latest per
+   exercise") so a future trend view is possible without a schema change —
+   mirrors the weight-log pattern above. `source` distinguishes a formula
+   estimate from a real tested max so the PR Day planner and any future
+   display can be honest about which one it's building from. */
+
+function getOneRMLogs() {
+  return readJSON(Keys.ONE_RM_LOGS, []);
+}
+
+function saveOneRMLogs(list) {
+  return writeJSON(Keys.ONE_RM_LOGS, list);
+}
+
+// log = { exerciseId, estimatedMax (kg, always stored in kg like everything
+//         else), source: 'estimate'|'tested', reps, weightUsed (kg), formula }
+function addOneRMLog(log) {
+  const list = getOneRMLogs();
+  const record = {
+    schemaVersion: SCHEMA_VERSION,
+    id: uid('orm'),
+    exerciseId: log.exerciseId,
+    date: log.date || Date.now(),
+    estimatedMax: log.estimatedMax,
+    source: log.source || 'estimate', // 'estimate' | 'tested'
+    reps: log.reps ?? null,
+    weightUsed: log.weightUsed ?? null,
+    notes: log.notes || '',
+    createdAt: Date.now(),
+  };
+  list.push(record);
+  saveOneRMLogs(list);
+  return record;
+}
+
+function deleteOneRMLog(logId) {
+  const list = getOneRMLogs().filter(l => l.id !== logId);
+  return saveOneRMLogs(list);
+}
+
+// Most recent 1RM record for a given exercise, or null.
+function getLatestOneRMForExercise(exerciseId) {
+  const list = getOneRMLogs()
+    .filter(l => l.exerciseId === exerciseId)
+    .sort((a, b) => b.date - a.date);
+  return list.length ? list[0] : null;
+}
+
 /* ---------------- AI response cache (persisted) ----------------
    Generic key->value cache for AI-narration/suggestion results that are
    expensive (quota-wise) to regenerate but cheap to store, keyed by
@@ -459,5 +509,6 @@ window.Storage = {
   getMeals, saveMeals, addMeal, updateMeal, deleteMeal, getMealsForDate,
   getWeightLogs, saveWeightLogs, addWeightLog, deleteWeightLog, getRecentWeightLogs,
   getNutritionProfile, saveNutritionProfile,
+  getOneRMLogs, saveOneRMLogs, addOneRMLog, deleteOneRMLog, getLatestOneRMForExercise,
   getAICacheEntry, setAICacheEntry, clearAICache,
 };

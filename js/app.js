@@ -14,10 +14,10 @@
    persists in localStorage and re-fires on every future render. */
 function escapeHTML(str) {
   return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
     .replace(/'/g, '&#39;');
 }
 // Kept as an alias — used historically for attribute values specifically,
@@ -125,6 +125,7 @@ const Nav = {
     if (viewName === 'history') renderHistory();
     if (viewName === 'library') renderLibrary();
     if (viewName === 'programs') renderPrograms();
+    if (viewName === 'onerepmax') renderOneRepMax();
     if (viewName === 'chat') renderChatView();
     if (viewName === 'nutrition') renderNutrition();
     if (viewName === 'nutritionProfile') renderNutritionProfileForm();
@@ -3005,4 +3006,629 @@ function saveMealFromModal() {
   closeModal();
   renderNutrition();
   showToast(label ? `Logged: ${label}` : 'Meal logged');
+}
+
+/* ============================================================
+   ONE-REP MAX CALCULATOR + PR DAY PLANNER
+   All math lives in js/one-rep-max.js (pure, deterministic,
+   multi-formula, explainable — same philosophy as progression.js).
+   This section is just state + rendering on top of it.
+   ============================================================ */
+
+const oneRMState = {
+  tab: 'calculator',      // 'calculator' | 'prday'
+  exerciseId: null,       // optional — freeform label used if not set
+  freeformLabel: '',
+  lastResult: null,       // most recent estimateOneRepMax() result
+  prDayExerciseId: null,
+  prDayManualMax: null,   // display-unit number, used if no saved/estimated max exists
+  prDayList: null,        // [{exerciseId, manualMax}] — multi-exercise PR Day, lazily initialized on first render
+  isBodyweightLoaded: false,   // true when the selected exercise is tagged 'Weighted Calisthenics'
+  includeBodyweight: false,    // whether to add bodyweight to the entered weight before estimating
+  bodyweightDisplay: null,     // bodyweight in current display unit, pre-filled from profile/logs when available
+  bodyweightSource: '',        // human-readable note on where the bodyweight number came from
+  translateSourceExerciseId: null,
+  translateTargetExerciseId: null,
+  translateSourceMax: null,    // display-unit number
+  translateResult: null,
+};
+
+// Exercises where the number you'd naturally log is ADDED weight (belt/vest)
+// on top of your own bodyweight, not the total load — dips and pull-ups are
+// the two in the seed library tagged this way. Total load = bodyweight +
+// added weight is what any 1RM formula actually needs, since the formulas
+// assume the input is the full weight moved, not just the plates.
+function isBodyweightLoadedExercise(exercise) {
+  return !!exercise && exercise.equipment === 'Weighted Calisthenics';
+}
+
+// Best available bodyweight in kg: most recent weight-log check-in if present
+// (more current than the profile field), else profile.weightKg, else null.
+function getKnownBodyweightKg() {
+  const recent = Storage.getRecentWeightLogs(1);
+  if (recent.length) return { kg: recent[recent.length - 1].weightKg, source: 'recent check-in' };
+  const profile = Storage.getProfile();
+  if (profile.weightKg) return { kg: profile.weightKg, source: 'your profile' };
+  return null;
+}
+
+function onORMExerciseChange(exerciseId) {
+  oneRMState.exerciseId = exerciseId || null;
+  const exercises = Storage.getExercises();
+  const exercise = exercises.find(ex => ex.id === exerciseId);
+  oneRMState.isBodyweightLoaded = isBodyweightLoadedExercise(exercise);
+  oneRMState.includeBodyweight = oneRMState.isBodyweightLoaded; // default on for these lifts, since forgetting it is the common mistake
+
+  if (oneRMState.isBodyweightLoaded) {
+    const settings = Storage.getSettings();
+    const known = getKnownBodyweightKg();
+    if (known) {
+      oneRMState.bodyweightDisplay = settings.units === 'lb'
+        ? Math.round(known.kg * 2.20462 * 10) / 10
+        : Math.round(known.kg * 10) / 10;
+      oneRMState.bodyweightSource = `Pulled from ${known.source}. Edit if it's changed.`;
+    } else {
+      oneRMState.bodyweightDisplay = null;
+      oneRMState.bodyweightSource = 'No bodyweight on file — log one in Fuel > weight check-in, or just type it in here.';
+    }
+  }
+  renderOneRepMax();
+}
+
+function onORMBodyweightToggle(checked) {
+  oneRMState.includeBodyweight = checked;
+  const wrap = document.getElementById('ormBodyweightInputWrap');
+  if (wrap) wrap.classList.toggle('hidden', !checked);
+}
+
+function switchOneRMTab(tab) {
+  oneRMState.tab = tab;
+  document.querySelectorAll('[data-ormtab]').forEach(btn => {
+    btn.classList.toggle('pill-active', btn.dataset.ormtab === tab);
+  });
+  renderOneRepMax();
+}
+
+function renderOneRepMax() {
+  const el = document.getElementById('onerepmaxContent');
+  if (!el) return;
+  el.innerHTML = oneRMState.tab === 'prday' ? buildPRDayTabHTML()
+    : oneRMState.tab === 'translate' ? buildTranslateTabHTML()
+    : buildCalculatorTabHTML();
+  if (oneRMState.tab === 'prday') populatePRDayMaxFromLatest(null);
+}
+
+function ormExerciseOptionsHTML(selectedId) {
+  const exercises = [...Storage.getExercises()].sort((a, b) => a.name.localeCompare(b.name));
+  const options = exercises.map(ex =>
+    `<option value="${escapeAttr(ex.id)}" ${ex.id === selectedId ? 'selected' : ''}>${escapeHTML(ex.name)}</option>`
+  ).join('');
+  return `<option value="">Not in my library / freeform</option>${options}`;
+}
+
+/* ---------------- Calculator tab ---------------- */
+
+function buildCalculatorTabHTML() {
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+
+  return `
+    <div class="card p-4 space-y-3">
+      <p class="font-display font-semibold text-sm">Estimate from a working set</p>
+      <p class="text-xs" style="color: var(--text-muted);">
+        Enter the heaviest set you've done recently (weight × reps, taken close to failure). We'll run it through
+        several published formulas and give you an average and a range instead of one falsely-precise number.
+      </p>
+
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Exercise (optional)</label>
+        <select id="ormExerciseSelect" onchange="onORMExerciseChange(this.value)">
+          ${ormExerciseOptionsHTML(oneRMState.exerciseId)}
+        </select>
+      </div>
+
+      <div id="ormFreeformWrap" class="${oneRMState.exerciseId ? 'hidden' : ''}">
+        <label class="text-xs" style="color: var(--text-muted);">Or just name the lift</label>
+        <input type="text" id="ormFreeformLabel" placeholder="e.g. Barbell Bench Press" value="${escapeAttr(oneRMState.freeformLabel)}">
+      </div>
+
+      <div id="ormBodyweightToggleWrap" class="${oneRMState.isBodyweightLoaded ? '' : 'hidden'}">
+        <label class="flex items-center gap-2 p-3 rounded-lg text-sm" style="background: var(--bg-elevated); border: 1px solid var(--border);">
+          <input type="checkbox" id="ormBodyweightToggle" ${oneRMState.includeBodyweight ? 'checked' : ''} onchange="onORMBodyweightToggle(this.checked)">
+          <span>This is added weight (belt/vest) — add my bodyweight to the total load</span>
+        </label>
+        <div id="ormBodyweightInputWrap" class="mt-2 ${oneRMState.includeBodyweight ? '' : 'hidden'}">
+          <label class="text-xs" style="color: var(--text-muted);">Your bodyweight (${Storage.getSettings().units === 'lb' ? 'lb' : 'kg'})</label>
+          <input type="number" inputmode="decimal" id="ormBodyweightInput" min="0" step="0.5" value="${oneRMState.bodyweightDisplay != null ? oneRMState.bodyweightDisplay : ''}">
+          <p class="text-xs mt-1" style="color: var(--text-muted);">${oneRMState.bodyweightSource || 'Enter your current bodyweight.'}</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs" id="ormWeightLabel" style="color: var(--text-muted);">${oneRMState.isBodyweightLoaded && oneRMState.includeBodyweight ? `Added weight (${unitLabel})` : `Weight (${unitLabel})`}</label>
+          <input type="number" inputmode="decimal" id="ormWeightInput" placeholder="e.g. 80" min="0" step="0.5">
+        </div>
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Reps completed</label>
+          <input type="number" inputmode="numeric" id="ormRepsInput" placeholder="e.g. 5" min="1" step="1">
+        </div>
+      </div>
+
+      <button class="btn-primary w-full py-2.5 text-sm" onclick="calculateOneRepMax()">Calculate estimated 1RM</button>
+    </div>
+
+    <div id="ormResultArea"></div>
+
+    <div class="card p-4 text-xs space-y-1.5" style="color: var(--text-muted);">
+      <p class="font-medium" style="color: var(--text);">Why a range, not one number?</p>
+      <p>Sub-max 1RM formulas are cross-validated regression estimates, not measurements — published error is roughly ±5-10% even in good conditions (LeSuer et al., 1997, <em>Journal of Strength and Conditioning Research</em>). Accuracy is best under ~6 reps and drops noticeably past ${OneRepMax.RELIABLE_REP_CEILING} reps, since fatigue starts to matter more than raw strength. The only way to know a true 1RM is to actually test it — see the PR Day planner tab.</p>
+    </div>
+  `;
+}
+
+function calculateOneRepMax() {
+  const enteredWeight = parseFloat(document.getElementById('ormWeightInput').value);
+  const reps = parseInt(document.getElementById('ormRepsInput').value, 10);
+  const freeformInput = document.getElementById('ormFreeformLabel');
+  if (freeformInput) oneRMState.freeformLabel = freeformInput.value.trim();
+
+  let totalWeight = enteredWeight;
+  let bodyweightUsedDisplay = null;
+
+  if (oneRMState.isBodyweightLoaded && oneRMState.includeBodyweight) {
+    const bwInput = document.getElementById('ormBodyweightInput');
+    const bw = bwInput ? parseFloat(bwInput.value) : NaN;
+    if (!Number.isFinite(bw) || bw <= 0) {
+      oneRMState.lastResult = { ok: false, error: 'Enter your bodyweight, or uncheck "added weight" if the number you entered is already your total load.' };
+      renderOneRMResult();
+      return;
+    }
+    oneRMState.bodyweightDisplay = bw;
+    totalWeight = (enteredWeight || 0) + bw;
+    bodyweightUsedDisplay = bw;
+  }
+
+  const result = OneRepMax.estimateOneRepMax(totalWeight, reps);
+  if (result.ok) {
+    result.addedWeight = bodyweightUsedDisplay != null ? enteredWeight : null;
+    result.bodyweightUsed = bodyweightUsedDisplay;
+  }
+  oneRMState.lastResult = result;
+  renderOneRMResult();
+}
+
+function renderOneRMResult() {
+  const area = document.getElementById('ormResultArea');
+  if (!area) return;
+  const result = oneRMState.lastResult;
+  if (!result) { area.innerHTML = ''; return; }
+
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+
+  if (!result.ok) {
+    area.innerHTML = `<div class="blob-card blob-card-neutral p-4 text-sm" style="color: var(--accent-warn);">${escapeHTML(result.error)}</div>`;
+    return;
+  }
+
+  const confidenceCopy = {
+    measured: { text: 'This is your actual weight, not an estimate — a 1-rep set at max effort IS your 1RM.', color: 'var(--accent-success)' },
+    high: { text: 'High-confidence estimate — formulas agree closely at this rep range.', color: 'var(--accent-success)' },
+    medium: { text: 'Reasonable estimate, but a lower rep count would be more precise.', color: 'var(--accent-warn)' },
+    low: { text: 'Rough ballpark only — high rep counts are unreliable for max-strength estimates.', color: 'var(--accent-warn)' },
+  }[result.confidence];
+
+  const formulaRows = Object.keys(result.byFormula).map(key => {
+    const label = key === 'actual' ? 'Measured (1-rep set)' : OneRepMax.FORMULA_LABELS[key];
+    return `<div class="flex items-center justify-between text-xs py-1"><span style="color: var(--text-muted);">${escapeHTML(label)}</span><span class="font-mono">${result.byFormula[key]}${unitLabel}</span></div>`;
+  }).join('');
+
+  area.innerHTML = `
+    <div class="blob-card blob-card-logged p-4 space-y-3">
+      ${result.bodyweightUsed != null ? `
+        <p class="text-xs text-center px-1" style="color: var(--text-muted);">
+          Calculated from total load: ${result.addedWeight ?? 0}${unitLabel} added + ${result.bodyweightUsed}${unitLabel} bodyweight = <strong>${result.weight}${unitLabel} total</strong>
+        </p>` : ''}
+      <div class="text-center py-2">
+        <p class="text-xs" style="color: var(--text-muted);">Estimated 1-rep max ${result.bodyweightUsed != null ? '(total load)' : ''}</p>
+        <p class="font-display font-bold text-3xl">${result.estimate}<span class="text-base font-normal">${unitLabel}</span></p>
+        ${result.low !== result.high ? `<p class="text-xs font-mono mt-0.5" style="color: var(--text-muted);">Range: ${result.low}–${result.high}${unitLabel}</p>` : ''}
+      </div>
+      <p class="text-xs px-1" style="color: ${confidenceCopy.color};">${confidenceCopy.text}</p>
+      ${result.warning ? `<p class="text-xs px-1" style="color: var(--text-muted);">${escapeHTML(result.warning)}</p>` : ''}
+      ${Object.keys(result.byFormula).length > 1 ? `
+        <div class="pt-2" style="border-top: 1px solid var(--border);">
+          <p class="text-xs font-medium mb-1">By formula</p>
+          ${formulaRows}
+        </div>` : ''}
+      <div class="flex flex-col gap-2 pt-1">
+        <button class="btn-secondary w-full py-2 text-sm" onclick="saveOneRMEstimate()">Save this estimate</button>
+        <button class="btn-primary w-full py-2 text-sm" onclick="usePRDayFromCalculator()">Plan my PR Day from this &rarr;</button>
+      </div>
+    </div>`;
+}
+
+function saveOneRMEstimate() {
+  const result = oneRMState.lastResult;
+  if (!result || !result.ok) return;
+  const settings = Storage.getSettings();
+  const toKg = (v) => settings.units === 'lb' ? v / 2.20462 : v;
+
+  if (!oneRMState.exerciseId) {
+    showToast('Pick an exercise from your library to save this — freeform lifts can still be planned below, just not saved.', 'warn');
+    return;
+  }
+
+  Storage.addOneRMLog({
+    exerciseId: oneRMState.exerciseId,
+    estimatedMax: toKg(result.estimate),
+    source: result.confidence === 'measured' ? 'tested' : 'estimate',
+    reps: result.reps,
+    weightUsed: toKg(result.weight),
+  });
+  showToast('1RM estimate saved');
+}
+
+function usePRDayFromCalculator() {
+  const result = oneRMState.lastResult;
+  if (!result || !result.ok) return;
+
+  // Seeds (or replaces) row 0 of the PR Day list with this calculator result
+  // rather than appending, so repeatedly tweaking a calculation and jumping
+  // over doesn't pile up duplicate rows for the same lift.
+  const seededRow = { exerciseId: oneRMState.exerciseId || null, manualMax: result.estimate };
+  if (!oneRMState.prDayList || oneRMState.prDayList.length === 0) {
+    oneRMState.prDayList = [seededRow];
+  } else {
+    oneRMState.prDayList[0] = seededRow;
+  }
+  switchOneRMTab('prday');
+}
+
+/* ---------------- Translate tab (cross-exercise ballpark) ----------------
+   Explicitly lower-confidence than the calculator tab — see the big comment
+   in one-rep-max.js above translateOneRepMax() for why. UI language here
+   stays consistently more hedged ("ballpark", "rough estimate") than the
+   calculator tab's language on purpose, so the two don't read as equally
+   rigorous. Exercise pickers are filtered to only lifts we actually have
+   ratio data for, so people aren't invited to translate to/from something
+   this can't support. */
+
+// Library exercise IDs (and freeform names) supported by the ratio table,
+// pre-filtered so the two selects only ever offer valid choices.
+function getTranslateSupportedExercises() {
+  const exercises = Storage.getExercises();
+  return exercises.filter(ex => OneRepMax.getRatioKeyForExerciseName(ex.name));
+}
+
+function translateExerciseOptionsHTML(selectedId) {
+  const supported = [...getTranslateSupportedExercises()].sort((a, b) => a.name.localeCompare(b.name));
+  if (supported.length === 0) {
+    return `<option value="">No supported exercises in your library</option>`;
+  }
+  const options = supported.map(ex =>
+    `<option value="${escapeAttr(ex.id)}" ${ex.id === selectedId ? 'selected' : ''}>${escapeHTML(ex.name)}</option>`
+  ).join('');
+  return `<option value="">Choose a lift...</option>${options}`;
+}
+
+function buildTranslateTabHTML() {
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  const supportedCount = getTranslateSupportedExercises().length;
+
+  return `
+    <div class="card p-4 space-y-3">
+      <p class="font-display font-semibold text-sm">Translate a max to a different lift</p>
+      <p class="text-xs" style="color: var(--text-muted);">
+        Know your max on one lift but never tested another? This gives a rough starting-point estimate using typical
+        strength ratios between lifts (e.g. dips tend to run heavier than bench press) — <strong>not</strong> a validated
+        formula like the Calculator tab. Use it to pick a sensible opening weight, then actually test the lift.
+      </p>
+
+      ${supportedCount === 0 ? `<p class="text-xs" style="color: var(--accent-warn);">None of your library exercises are covered yet — this works for common compounds (bench, squat, deadlift, OHP, rows, weighted dips/pull-ups).</p>` : ''}
+
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">I know my max on...</label>
+        <select id="ormTranslateSource" onchange="oneRMState.translateSourceExerciseId = this.value || null;">
+          ${translateExerciseOptionsHTML(oneRMState.translateSourceExerciseId)}
+        </select>
+      </div>
+
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">My 1RM on that lift (${unitLabel})</label>
+        <input type="number" inputmode="decimal" id="ormTranslateSourceMax" placeholder="e.g. 100"
+               value="${oneRMState.translateSourceMax != null ? oneRMState.translateSourceMax : ''}">
+      </div>
+
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Estimate my max on...</label>
+        <select id="ormTranslateTarget" onchange="oneRMState.translateTargetExerciseId = this.value || null;">
+          ${translateExerciseOptionsHTML(oneRMState.translateTargetExerciseId)}
+        </select>
+      </div>
+
+      <button class="btn-primary w-full py-2.5 text-sm" onclick="calculateTranslatedMax()" ${supportedCount === 0 ? 'disabled' : ''}>Translate</button>
+    </div>
+
+    <div id="ormTranslateResultArea"></div>
+  `;
+}
+
+function calculateTranslatedMax() {
+  const settings = Storage.getSettings();
+  const sourceMax = parseFloat(document.getElementById('ormTranslateSourceMax').value);
+  oneRMState.translateSourceMax = Number.isFinite(sourceMax) ? sourceMax : null;
+
+  const exercises = Storage.getExercises();
+  const sourceEx = exercises.find(ex => ex.id === oneRMState.translateSourceExerciseId);
+  const targetEx = exercises.find(ex => ex.id === oneRMState.translateTargetExerciseId);
+
+  const area = document.getElementById('ormTranslateResultArea');
+  if (!sourceEx || !targetEx) {
+    area.innerHTML = `<div class="blob-card blob-card-neutral p-4 text-sm" style="color: var(--accent-warn);">Pick both a source and target lift.</div>`;
+    return;
+  }
+
+  const result = OneRepMax.translateOneRepMax(sourceMax, sourceEx.name, targetEx.name);
+  oneRMState.translateResult = result;
+
+  if (!result.ok) {
+    area.innerHTML = `<div class="blob-card blob-card-neutral p-4 text-sm" style="color: var(--accent-warn);">${escapeHTML(result.error)}</div>`;
+    return;
+  }
+
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  area.innerHTML = `
+    <div class="blob-card blob-card-neutral p-4 space-y-3" style="border: 1px dashed var(--border);">
+      <p class="text-xs text-center px-1 uppercase tracking-wide" style="color: var(--accent-warn);">Rough ballpark — not a tested number</p>
+      <div class="text-center py-2">
+        <p class="text-xs" style="color: var(--text-muted);">Estimated ${escapeHTML(targetEx.name)} 1RM</p>
+        <p class="font-display font-bold text-3xl">${result.estimate}<span class="text-base font-normal">${unitLabel}</span></p>
+        <p class="text-xs font-mono mt-0.5" style="color: var(--text-muted);">Wide range: ${result.low}–${result.high}${unitLabel}</p>
+      </div>
+      <p class="text-xs px-1" style="color: var(--text-muted);">${escapeHTML(result.warning)}</p>
+      <button class="btn-secondary w-full py-2 text-sm" onclick="usePRDayFromTranslate()">Use as a cautious opener for PR Day &rarr;</button>
+    </div>`;
+}
+
+function usePRDayFromTranslate() {
+  const result = oneRMState.translateResult;
+  if (!result || !result.ok) return;
+  // Use the LOW end of the range, not the point estimate, as the seeded PR
+  // Day max — this is an untested lift, so the warm-up ramp should start
+  // from the conservative end rather than the optimistic one.
+  const seededRow = { exerciseId: oneRMState.translateTargetExerciseId || null, manualMax: result.low };
+  if (!oneRMState.prDayList || oneRMState.prDayList.length === 0) {
+    oneRMState.prDayList = [seededRow];
+  } else {
+    oneRMState.prDayList[0] = seededRow;
+  }
+  showToast('Seeded PR Day with the conservative end of the estimate — adjust if needed.');
+  switchOneRMTab('prday');
+}
+
+/* ---------------- PR Day planner tab (multi-exercise) ----------------
+   prDayList holds one entry per exercise the user wants to max out today:
+   { exerciseId, manualMax (display units) }. Each renders its own picker
+   row, and "Build my plan" generates one plan card per entry, stacked in
+   the order added — so someone testing squat + bench + deadlift on the
+   same day gets one scrollable plan instead of re-running this per lift. */
+
+function buildPRDayTabHTML() {
+  if (!oneRMState.prDayList || oneRMState.prDayList.length === 0) {
+    oneRMState.prDayList = [{ exerciseId: oneRMState.prDayExerciseId || null, manualMax: oneRMState.prDayManualMax || null }];
+  }
+
+  return `
+    <div class="card p-4 space-y-3">
+      <p class="font-display font-semibold text-sm">Plan a PR attempt</p>
+      <p class="text-xs" style="color: var(--text-muted);">
+        Pick each lift you want to max out today. We'll build a full warm-up ramp and a graded attempt scheme for
+        every one, using the same percentage-based structure coaches use to prep a real max attempt safely.
+      </p>
+
+      <div id="ormPRDayRows" class="space-y-3">
+        ${oneRMState.prDayList.map((row, i) => buildPRDayRowHTML(row, i)).join('')}
+      </div>
+
+      <button class="btn-secondary w-full py-2 text-sm" onclick="addPRDayRow()">+ Add another exercise</button>
+      <button class="btn-primary w-full py-2.5 text-sm" onclick="buildPRDayPlan()">Build my warm-up &amp; attempt plan${oneRMState.prDayList.length > 1 ? 's' : ''}</button>
+    </div>
+
+    <div id="ormPRDayResultArea"></div>
+  `;
+}
+
+function buildPRDayRowHTML(row, index) {
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  return `
+    <div class="p-3 rounded-lg space-y-2" style="background: var(--bg-elevated); border: 1px solid var(--border);">
+      <div class="flex items-center justify-between gap-2">
+        <select class="flex-1" onchange="onPRDayExerciseChange(${index}, this.value)">
+          ${ormExerciseOptionsHTML(row.exerciseId)}
+        </select>
+        ${oneRMState.prDayList.length > 1 ? `<button class="btn-secondary py-2 px-3 text-sm" onclick="removePRDayRow(${index})">&times;</button>` : ''}
+      </div>
+      <div>
+        <label class="text-xs" style="color: var(--text-muted);">Current estimated max (${unitLabel})</label>
+        <input type="number" inputmode="decimal" id="ormPRMaxInput_${index}" placeholder="From your last estimate or best known lift"
+               value="${row.manualMax != null ? row.manualMax : ''}" oninput="oneRMState.prDayList[${index}].manualMax = parseFloat(this.value) || null;">
+        <p id="ormPRMaxSource_${index}" class="text-xs mt-1" style="color: var(--text-muted);"></p>
+      </div>
+    </div>`;
+}
+
+function addPRDayRow() {
+  oneRMState.prDayList.push({ exerciseId: null, manualMax: null });
+  renderOneRepMax();
+}
+
+function removePRDayRow(index) {
+  oneRMState.prDayList.splice(index, 1);
+  renderOneRepMax();
+}
+
+function onPRDayExerciseChange(index, exerciseId) {
+  oneRMState.prDayList[index].exerciseId = exerciseId || null;
+  populatePRDayMaxFromLatest(index);
+}
+
+// Auto-fills the max field for one row from the most recent saved log for
+// that exercise, if one exists. Called once per row on render, and again
+// whenever that row's exercise select changes.
+function populatePRDayMaxFromLatest(index) {
+  const indices = index != null ? [index] : (oneRMState.prDayList || []).map((_, i) => i);
+
+  indices.forEach(i => {
+    const row = oneRMState.prDayList[i];
+    const sourceEl = document.getElementById(`ormPRMaxSource_${i}`);
+    const inputEl = document.getElementById(`ormPRMaxInput_${i}`);
+    if (!sourceEl || !inputEl || !row) return;
+
+    if (!row.exerciseId) {
+      sourceEl.textContent = 'No exercise selected — enter your best known max by hand.';
+      return;
+    }
+
+    const settings = Storage.getSettings();
+    const fromKg = (kg) => settings.units === 'lb' ? Math.round(kg * 2.20462 * 10) / 10 : Math.round(kg * 10) / 10;
+    const latest = Storage.getLatestOneRMForExercise(row.exerciseId);
+
+    if (latest) {
+      const displayVal = fromKg(latest.estimatedMax);
+      inputEl.value = displayVal;
+      row.manualMax = displayVal;
+      const dateLabel = new Date(latest.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      sourceEl.textContent = `Pulled from your ${latest.source === 'tested' ? 'tested' : 'estimated'} max saved ${dateLabel}. Edit if you have a more recent number.`;
+    } else {
+      sourceEl.textContent = 'No saved max for this lift yet — enter your best known/estimated max, or use the Calculator tab first.';
+    }
+  });
+}
+
+function buildPRDayPlan() {
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+  const profile = Storage.getProfile();
+  const exercises = Storage.getExercises();
+  const area = document.getElementById('ormPRDayResultArea');
+
+  // Pull the live input values (not just state) in case someone typed but
+  // didn't blur the field.
+  oneRMState.prDayList.forEach((row, i) => {
+    const inputEl = document.getElementById(`ormPRMaxInput_${i}`);
+    if (inputEl) {
+      const v = parseFloat(inputEl.value);
+      row.manualMax = Number.isFinite(v) ? v : null;
+    }
+  });
+
+  const cards = oneRMState.prDayList.map((row, i) => {
+    const exercise = exercises.find(ex => ex.id === row.exerciseId);
+    const equipment = exercise ? exercise.equipment : '';
+    const exerciseName = exercise ? exercise.name : (row.exerciseId ? 'this lift' : `Exercise ${i + 1} (not selected)`);
+
+    const plan = OneRepMax.buildPRDayPlan({
+      estimatedMax: row.manualMax,
+      unit: unitLabel,
+      equipment,
+      experienceLevel: profile.experienceLevel || 'beginner',
+    });
+
+    if (!plan.ok) {
+      return `<div class="blob-card blob-card-neutral p-4 text-sm" style="color: var(--accent-warn);">${escapeHTML(exerciseName)}: ${escapeHTML(plan.error)}</div>`;
+    }
+
+    const stepRow = (step, isAttempt) => `
+      <div class="flex items-center justify-between py-2" style="border-bottom: 1px solid var(--border);">
+        <div>
+          <p class="text-sm font-medium">${escapeHTML(step.label)}</p>
+          <p class="text-xs" style="color: var(--text-muted);">${Math.round(step.pctOfMax * 100)}% &middot; rest ${Math.round(step.restSec / 60 * 10) / 10} min</p>
+        </div>
+        <div class="text-right">
+          <p class="font-mono font-semibold ${isAttempt ? 'tag-suggest' : ''}">${step.weight}${unitLabel}</p>
+          <p class="text-xs" style="color: var(--text-muted);">${step.reps} rep${step.reps === 1 ? '' : 's'}</p>
+        </div>
+      </div>`;
+
+    return `
+      <div class="blob-card blob-card-suggest p-4 space-y-3">
+        <p class="font-display font-semibold text-sm">${escapeHTML(exerciseName)} — PR Day plan</p>
+        <p class="text-xs" style="color: var(--text-muted);">Built from an estimated max of ${plan.estimatedMax}${unitLabel}. Rest time for this lift alone: roughly ${plan.totalRestMinutesApprox} min.</p>
+        <div>
+          <p class="text-xs font-medium uppercase tracking-wide mb-1" style="color: var(--text-muted);">Warm-up ramp</p>
+          ${plan.warmups.map(s => stepRow(s, false)).join('')}
+        </div>
+        <div>
+          <p class="text-xs font-medium uppercase tracking-wide mb-1 mt-2" style="color: var(--text-muted);">Max attempts</p>
+          ${plan.attempts.map(s => stepRow(s, true)).join('')}
+        </div>
+        ${row.exerciseId ? `<button class="btn-secondary w-full py-2 text-sm" onclick="logPRDayResult('${escapeAttr(row.exerciseId)}')">Log today's result once you've attempted it</button>` : ''}
+      </div>`;
+  });
+
+  const validCount = oneRMState.prDayList.filter(r => r.manualMax > 0).length;
+  const totalRestMin = oneRMState.prDayList.reduce((sum, row) => {
+    const exercise = exercises.find(ex => ex.id === row.exerciseId);
+    const plan = OneRepMax.buildPRDayPlan({ estimatedMax: row.manualMax, unit: unitLabel, equipment: exercise ? exercise.equipment : '', experienceLevel: profile.experienceLevel || 'beginner' });
+    return sum + (plan.ok ? plan.totalRestMinutesApprox : 0);
+  }, 0);
+
+  const safetyList = OneRepMax.getPRDaySafetyChecklist(profile.experienceLevel || 'beginner');
+
+  area.innerHTML = `
+    ${validCount > 1 ? `<div class="card p-3 text-xs text-center" style="color: var(--text-muted);">Testing ${validCount} lifts today — rest time alone adds up to roughly ${totalRestMin} min across all of them. Consider ordering the biggest/most fatiguing lift (usually squat or deadlift) last, or spreading multiple true maxes across different days if you can — fatigue from an earlier max attempt will blunt the next one.</div>` : ''}
+    ${cards.join('')}
+    <div class="card p-4 space-y-2">
+      <p class="font-display font-semibold text-sm" style="color: var(--accent-warn);">Safety checklist — read before you attempt</p>
+      <ul class="text-xs space-y-2" style="color: var(--text-muted);">
+        ${safetyList.map(item => `<li class="flex gap-2"><span style="color: var(--accent-warn);">&bull;</span><span>${escapeHTML(item)}</span></li>`).join('')}
+      </ul>
+    </div>
+  `;
+}
+
+function logPRDayResult(exerciseId) {
+  const modal = document.getElementById('modalRoot');
+  const settings = Storage.getSettings();
+  const unitLabel = settings.units === 'lb' ? 'lb' : 'kg';
+
+  modal.innerHTML = `
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4 modal-backdrop" style="background: rgba(0,0,0,0.7);" onclick="if(event.target===this) closeModal()">
+      <div class="modal-sheet card w-full max-w-sm p-5 space-y-3">
+        <p class="font-display font-bold text-lg">Log your result</p>
+        <p class="text-sm" style="color: var(--text-muted);">What did you actually hit today? This becomes your new saved max for this lift.</p>
+        <div>
+          <label class="text-xs" style="color: var(--text-muted);">Weight lifted for 1 rep (${unitLabel})</label>
+          <input type="number" inputmode="decimal" id="prResultWeight" placeholder="e.g. 100" min="0" step="0.5">
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button class="btn-secondary flex-1 py-2 text-sm" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary flex-1 py-2 text-sm" onclick="savePRDayResult('${escapeAttr(exerciseId)}')">Save</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function savePRDayResult(exerciseId) {
+  const weight = parseFloat(document.getElementById('prResultWeight').value);
+  if (!Number.isFinite(weight) || weight <= 0) {
+    showToast('Enter the weight you lifted.', 'warn');
+    return;
+  }
+  const settings = Storage.getSettings();
+  const toKg = (v) => settings.units === 'lb' ? v / 2.20462 : v;
+
+  Storage.addOneRMLog({
+    exerciseId,
+    estimatedMax: toKg(weight),
+    source: 'tested',
+    reps: 1,
+  });
+  closeModal();
+  showToast('New tested max saved 🎉');
+  populatePRDayMaxFromLatest();
 }
